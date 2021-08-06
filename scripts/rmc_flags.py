@@ -96,7 +96,7 @@ def add_linking_flags(make_group, add_flag, config):
     group = make_group("Linking flags",
                        "Provide information about how to link the prover for RMC.")
     add_flag(group, "--c-lib", type=pl.Path, nargs="*", default=[],
-            action=ExtendAction,
+             action=ExtendAction,
              help="Link external C files referenced by Rust code")
     add_flag(group, "--function", default="main",
              help="Entry point for verification")
