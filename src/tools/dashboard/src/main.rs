@@ -1,9 +1,12 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0 OR MIT
+#![feature(command_access)]
 
+mod books;
 mod dashboard;
-mod reference;
+mod litani;
+mod util;
 
 fn main() {
-    reference::display_reference_dashboard();
+    books::generate_dashboard();
 }
