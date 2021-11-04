@@ -422,6 +422,11 @@ pub struct ExternEntry {
     /// This can be disabled with the `noprelude` option like
     /// `--extern noprelude:name`.
     pub add_prelude: bool,
+    /// Indicates this is an implicit dependency that should be injected even if not explicitly used.
+    ///
+    /// This can be enabled with the `implicit` option like
+    /// '--extern implicit:name=foo.rlib
+    pub is_implicit: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -481,7 +486,7 @@ impl Externs {
 
 impl ExternEntry {
     fn new(location: ExternLocation) -> ExternEntry {
-        ExternEntry { location, is_private_dep: false, add_prelude: false }
+        ExternEntry { location, is_private_dep: false, add_prelude: false, is_implicit: false }
     }
 
     pub fn files(&self) -> Option<impl Iterator<Item = &CanonicalizedPath>> {
@@ -1835,6 +1840,7 @@ pub fn parse_externs(
 
         let mut is_private_dep = false;
         let mut add_prelude = true;
+        let mut is_implicit = false;
         if let Some(opts) = options {
             if !is_unstable_enabled {
                 early_error(
@@ -1856,6 +1862,7 @@ pub fn parse_externs(
                             );
                         }
                     }
+                    "implicit" => is_implicit = true,
                     _ => early_error(error_format, &format!("unknown --extern option `{}`", opt)),
                 }
             }
@@ -1866,6 +1873,7 @@ pub fn parse_externs(
         entry.is_private_dep |= is_private_dep;
         // If any flag is missing `noprelude`, then add to the prelude.
         entry.add_prelude |= add_prelude;
+        entry.is_implicit |= is_implicit;
     }
     Externs(externs)
 }

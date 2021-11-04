@@ -928,6 +928,18 @@ impl<'a> CrateLoader<'a> {
         });
     }
 
+    /// This function will inject extern crates that were defined as implicit and that have not
+    /// been explicitly imported yet.
+    fn inject_implicit_extern(&mut self, krate: &ast::Crate) {
+        for (name, _) in self.sess.opts.externs.iter().filter(|(_, entry)| entry.is_implicit) {
+            info!("injecting implicit extern {}", name);
+            let name_interned = Symbol::intern(name);
+            if !self.used_extern_options.contains(&name_interned) {
+                self.resolve_crate(name_interned, DUMMY_SP, CrateDepKind::Implicit);
+            }
+        }
+    }
+
     fn report_unused_deps(&mut self, krate: &ast::Crate) {
         // Make a point span rather than covering the whole file
         let span = krate.span.shrink_to_lo();
@@ -979,6 +991,7 @@ impl<'a> CrateLoader<'a> {
         self.inject_profiler_runtime(krate);
         self.inject_allocator_crate(krate);
         self.inject_panic_runtime(krate);
+        self.inject_implicit_extern(krate);
 
         self.report_unused_deps(krate);
 
