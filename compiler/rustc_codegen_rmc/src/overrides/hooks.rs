@@ -283,7 +283,7 @@ struct MemReplace;
 impl<'tcx> GotocHook<'tcx> for MemReplace {
     fn hook_applies(&self, tcx: TyCtxt<'tcx>, instance: Instance<'tcx>) -> bool {
         let name = with_no_trimmed_paths(|| tcx.def_path_str(instance.def_id()));
-        name == "core::mem::replace" || name == "std::mem::replace"
+        name == "core::mem::replace" || name == "std::mem::replace" || name == "rmc::mem::replace"
     }
 
     fn handle(
@@ -332,6 +332,7 @@ impl<'tcx> GotocHook<'tcx> for MemSwap {
             || name == "std::mem::swap"
             || name == "core::ptr::swap"
             || name == "std::ptr::swap"
+            || name == "rmc::mem::swap"
     }
 
     fn handle(
@@ -396,6 +397,7 @@ impl<'tcx> GotocHook<'tcx> for PtrRead {
             || name == "std::ptr::read"
             || name == "std::ptr::read_unaligned"
             || name == "std::ptr::read_volatile"
+            || name == "rmc::ptr::read"
     }
 
     fn handle(
@@ -434,6 +436,7 @@ impl<'tcx> GotocHook<'tcx> for PtrWrite {
             || name == "std::ptr::write"
             || name == "std::ptr::write_unaligned"
             || name == "std::ptr::write_volatile"
+            || name == "rmc::ptr::write"
     }
 
     fn handle(

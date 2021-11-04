@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 #![feature(rustc_attrs)] // Used for rustc_diagnostic_item.
 
+pub mod mem;
+pub mod ptr;
+
 /// Creates an assumption that will be valid after this statement run. Note that the assumption
 /// will only be applied for paths that follow the assumption. If the assumption doesn't hold, the
 /// program will exit successfully.
