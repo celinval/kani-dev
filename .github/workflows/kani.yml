@@ -52,7 +52,7 @@ jobs:
 
       - name: Generate book runner report
         if: ${{ matrix.os == 'ubuntu-20.04' }}
-        run: cargo run -p bookrunner
+        run: time cargo run -p bookrunner > /dev/null
         env:
             DOC_RUST_LANG_ORG_CHANNEL: nightly
 
