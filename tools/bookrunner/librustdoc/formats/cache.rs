@@ -307,11 +307,6 @@ impl<'a, 'tcx> DocFolder for CacheBuilder<'a, 'tcx> {
                     }
                 }
             }
-            clean::PrimitiveItem(..) => {
-                self.cache
-                    .paths
-                    .insert(item.def_id.expect_def_id(), (self.cache.stack.clone(), item.type_()));
-            }
 
             clean::ExternCrateItem { .. }
             | clean::ImportItem(..)
@@ -322,8 +317,7 @@ impl<'a, 'tcx> DocFolder for CacheBuilder<'a, 'tcx> {
             | clean::StructFieldItem(..)
             | clean::AssocConstItem(..)
             | clean::AssocTypeItem(..)
-            | clean::StrippedItem(..)
-            | clean::KeywordItem(..) => {
+            | clean::StrippedItem(..) => {
                 // FIXME: Do these need handling?
                 // The person writing this comment doesn't know.
                 // So would rather leave them to an expert,
