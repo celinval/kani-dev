@@ -281,6 +281,7 @@ impl Clean<WherePredicate> for hir::WherePredicate<'_> {
 
 impl<'a> Clean<Option<WherePredicate>> for ty::Predicate<'a> {
     fn clean(&self, cx: &mut DocContext<'_>) -> Option<WherePredicate> {
+        #![allow(unreachable_patterns)]
         let bound_predicate = self.kind();
         match bound_predicate.skip_binder() {
             ty::PredicateKind::Trait(pred) => bound_predicate.rebind(pred).clean(cx),

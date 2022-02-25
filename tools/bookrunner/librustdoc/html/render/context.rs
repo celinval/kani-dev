@@ -21,7 +21,7 @@ use super::{
     BASIC_KEYWORDS,
 };
 
-use crate::clean::{self, types::ExternalLocation, ExternalCrate};
+use crate::clean::{self};
 use crate::config::RenderOptions;
 use crate::docfs::{DocFS, PathError};
 use crate::error::Error;
@@ -303,7 +303,6 @@ impl<'tcx> Context<'tcx> {
         };
         let file = &file;
 
-        let krate_sym;
         let (krate, path) = if cnum == LOCAL_CRATE {
             if let Some(path) = self.shared.local_sources.get(file) {
                 (self.shared.layout.krate.as_str(), path)
@@ -311,28 +310,7 @@ impl<'tcx> Context<'tcx> {
                 return None;
             }
         } else {
-            let (krate, src_root) = match *self.cache().extern_locations.get(&cnum)? {
-                ExternalLocation::Local => {
-                    let e = ExternalCrate { crate_num: cnum };
-                    (e.name(self.tcx()), e.src_root(self.tcx()))
-                }
-                ExternalLocation::Remote(ref s) => {
-                    root = s.to_string();
-                    let e = ExternalCrate { crate_num: cnum };
-                    (e.name(self.tcx()), e.src_root(self.tcx()))
-                }
-                ExternalLocation::Unknown => return None,
-            };
-
-            sources::clean_path(&src_root, file, false, |component| {
-                path.push_str(&component.to_string_lossy());
-                path.push('/');
-            });
-            let mut fname = file.file_name().expect("source has no filename").to_os_string();
-            fname.push(".html");
-            path.push_str(&fname.to_string_lossy());
-            krate_sym = krate;
-            (krate_sym.as_str(), &path)
+            unreachable!("This code cannot be reached. ExternalLocation was never built");
         };
 
         let anchor = if with_lines {

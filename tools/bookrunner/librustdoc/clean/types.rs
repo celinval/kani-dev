@@ -245,16 +245,6 @@ impl ExternalCrate {
     }
 }
 
-/// Indicates where an external crate can be found.
-crate enum ExternalLocation {
-    /// Remote URL root of the external crate
-    Remote(String),
-    /// This external crate can be found in the local doc/ folder
-    Local,
-    /// The external crate could not be found.
-    Unknown,
-}
-
 /// Anything with a source location and set of attributes and, optionally, a
 /// name. That is, anything that can be documented. This doesn't correspond
 /// directly to the AST's concept of an item; it's a strict superset.

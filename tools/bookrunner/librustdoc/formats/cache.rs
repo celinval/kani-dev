@@ -6,7 +6,7 @@ use rustc_middle::middle::privacy::AccessLevels;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::{sym, Symbol};
 
-use crate::clean::{self, types::ExternalLocation, ItemId};
+use crate::clean::{self, ItemId};
 use crate::fold::DocFolder;
 use crate::formats::item_type::ItemType;
 use crate::formats::Impl;
@@ -67,9 +67,6 @@ crate struct Cache {
     /// implementors of the trait, and this mapping is exactly, that: a mapping
     /// of trait ids to the list of known implementors of the trait
     crate implementors: FxHashMap<DefId, Vec<Impl>>,
-
-    /// Cache of where external crate documentation can be found.
-    crate extern_locations: FxHashMap<CrateNum, ExternalLocation>,
 
     /// Cache of where documentation for primitives can be found.
     crate primitive_locations: FxHashMap<clean::PrimitiveType, DefId>,
