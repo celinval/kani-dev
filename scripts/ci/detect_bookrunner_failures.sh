@@ -32,5 +32,10 @@ if [[ $NUM_FAILURES -ge $THRESHOLD ]]; then
     echo "This means that your changes are causing at least 5% more failures than in previous bookrunner runs."
     echo "To check these failures locally, run \`cargo run -p bookrunner\` and inspect the report in \`build/output/latest/html/index.html\`."
     echo "For more details on bookrunner, go to https://model-checking.github.io/kani/bookrunner.html"
+
+    for f in build/output/latest/status/1*;
+        do echo $f;
+        cat $f
+    done
     exit 1
 fi
