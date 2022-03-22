@@ -98,7 +98,7 @@ impl KaniSession {
         } else if self.args.verbose {
             flags.push("--log-level=info".into());
         } else {
-            flags.push("--log-level=warn".into());
+            flags.push("--log-level=error".into());
         }
 
         if self.args.restrict_vtable() {
