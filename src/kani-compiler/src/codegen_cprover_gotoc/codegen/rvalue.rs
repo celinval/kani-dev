@@ -4,7 +4,6 @@ use super::typ::{is_pointer, pointee_type, TypeExt};
 use crate::codegen_cprover_gotoc::utils::{dynamic_fat_ptr, slice_fat_ptr};
 use crate::codegen_cprover_gotoc::{GotocCtx, VtableCtx};
 use cbmc::goto_program::{Expr, Location, Stmt, Symbol, Type};
-use cbmc::utils::BUG_REPORT_URL;
 use cbmc::MachineModel;
 use cbmc::NO_PRETTY_NAME;
 use cbmc::{btree_string_map, InternString, InternedString};
@@ -820,25 +819,7 @@ impl<'tcx> GotocCtx<'tcx> {
         //     assert(__CPROVER_OBJECT_SIZE(&local_temp) == vt_size);
         let temp_var = self.gen_temp_variable(ty.clone(), Location::none()).to_expr();
         let decl = Stmt::decl(temp_var.clone(), None, Location::none());
-        let cbmc_size = if ty.is_empty() {
-            // CBMC errors on passing a pointer to void to __CPROVER_OBJECT_SIZE.
-            // In practice, we have seen this with the Never type, which has size 0:
-            // https://play.rust-lang.org/?version=nightly&mode=debug&edition=2018&gist=0f6eef4f6abeb279031444735e73d2e1
-            assert!(
-                matches!(operand_type.kind(), ty::Never),
-                "Expected Never, got: {:?}",
-                operand_type
-            );
-            Type::size_t().zero()
-        } else {
-            Expr::object_size(temp_var.address_of())
-        };
-        let check = Expr::eq(cbmc_size, vt_size.clone());
-        let assert_msg =
-            format!("Correct CBMC vtable size for {:?} (MIR type {:?})", ty, operand_type.kind());
-        let size_assert =
-            Stmt::assert_sanity_check(check, &assert_msg, BUG_REPORT_URL, Location::none());
-        Stmt::block(vec![decl, size_assert], Location::none())
+        Stmt::block(vec![decl], Location::none())
     }
 
     fn codegen_vtable(&mut self, src_mir_type: Ty<'tcx>, dst_mir_type: Ty<'tcx>) -> Expr {

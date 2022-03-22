@@ -44,8 +44,8 @@ impl<'tcx> GotocCtx<'tcx> {
             TerminatorKind::SwitchInt { discr, switch_ty, targets } => {
                 self.codegen_switch_int(discr, *switch_ty, targets)
             }
-            TerminatorKind::Resume => Stmt::assert_false("resume instruction", loc),
-            TerminatorKind::Abort => Stmt::assert_false("abort instruction", loc),
+            TerminatorKind::Resume => Stmt::assume(Expr::bool_false(), loc),
+            TerminatorKind::Abort => Stmt::assume(Expr::bool_false(), loc),
             TerminatorKind::Return => {
                 let rty = self.current_fn().sig().unwrap().skip_binder().output();
                 if rty.is_unit() {
@@ -62,7 +62,7 @@ impl<'tcx> GotocCtx<'tcx> {
             }
             TerminatorKind::Unreachable => Stmt::block(
                 vec![
-                    Stmt::assert_false("unreachable code", loc.clone()),
+                    //Stmt::assert_false("unreachable code", loc.clone()),
                     Stmt::assume(Expr::bool_false(), loc.clone()),
                 ],
                 loc,
