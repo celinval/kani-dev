@@ -21,9 +21,10 @@ use crate::cve::VecDeque;
 #[cfg(not(cve))]
 use crate::fixed::VecDeque;
 
-/// Prove that reserving a min capacity that is less than current capacity is no-op.
+/// Verify that a request to reserve space to `n` elements is a no-op when there's enough capacity.
 #[kani::proof]
 pub fn reserve_less_capacity_is_no_op() {
+    // Start with a default VecDeque object.
     let mut vec_deque = VecDeque::<i8>::new();
     let old_capacity = vec_deque.capacity();
 
@@ -31,9 +32,9 @@ pub fn reserve_less_capacity_is_no_op() {
     let front = kani::any();
     vec_deque.push_front(front);
 
-    // Change extra capacity to *any* value that is less than current capacity.
+    // Reserve space to *any* value that is less than available capacity.
     let new_capacity: usize = kani::any();
-    kani::assume(new_capacity < old_capacity);
+    kani::assume(new_capacity <= (old_capacity - vec_deque.len()));
     vec_deque.reserve(new_capacity);
 
     // Capacity should stay the same.

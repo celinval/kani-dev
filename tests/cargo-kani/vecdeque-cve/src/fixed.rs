@@ -3,7 +3,7 @@
 // Modifications Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // See GitHub history for details.
 
-//! This is a modified version of std collections/vec_deque/mod.rs
+//! This is a modified version of rust std collections/vec_deque/mod.rs
 
 //! A double-ended queue (deque) implemented with a growable ring buffer.
 //!
