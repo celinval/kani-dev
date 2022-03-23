@@ -26,6 +26,7 @@ import sys
 
 from colorama import Fore, Style
 from enum import Enum
+from os import path
 
 # Enum to store the style of output that is given by the argument flags
 output_style_switcher = {
@@ -95,9 +96,19 @@ class SourceLocation:
         self.column = source_location.get("column", None)
         self.line = source_location.get("line", None)
 
+    def filepath(self):
+        if not self.filename:
+            return None
+
+        cwd = os.getcwd()
+        if path.commonpath([self.filename, cwd]) == cwd:
+            return path.relpath(self.filename)
+
+        return "~/{}".format(path.relpath(self.filename, path.expanduser("~")))
+
     def __str__(self):
         if self.filename:
-            s = f"{self.filename}"
+            s = f"{self.filepath()}"
             if self.line:
                 s += f":{self.line}"
                 if self.column:
