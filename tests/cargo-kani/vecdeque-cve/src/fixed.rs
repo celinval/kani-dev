@@ -350,9 +350,9 @@ impl<T, A: Allocator> VecDeque<T, A> {
     /// ```
     //#[stable(feature = "rust1", since = "1.0.0")]
     pub fn reserve(&mut self, additional: usize) {
-        let old_cap = self.cap();
-        let used_cap = self.len() + 1;
-        let new_cap = used_cap
+        let old_cap = self.cap(); // old_cal: 8
+        let used_cap = self.len() + 1; // used_cap: 2
+        let new_cap = used_cap // new_cap: 8
             .checked_add(additional)
             .and_then(|needed_cap| needed_cap.checked_next_power_of_two())
             .expect("capacity overflow");

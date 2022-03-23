@@ -11,24 +11,28 @@
 #![feature(ptr_internals)]
 #![feature(rustc_allow_const_fn_unstable)]
 
-mod cve;
-mod fixed;
 mod raw_vec;
+mod vec_deque;
 
-#[cfg(cve)]
-use crate::cve::VecDeque;
+// Older version of vec_deque with reserve issue.
+use crate::vec_deque::VecDeque;
+//use std::collections::vec_deque::VecDeque;
 
-#[cfg(not(cve))]
-use crate::fixed::VecDeque;
+const MAX_CAPACITY: usize = usize::MAX >> 1;
 
 /// Verify that a request to reserve space to `n` elements is a no-op when there's enough capacity.
 #[kani::proof]
-pub fn reserve_less_capacity_is_no_op() {
+pub fn reserve_available_capacity_is_no_op() {
     // Start with a default VecDeque object.
-    let mut vec_deque = VecDeque::<i8>::new();
+    // Markers:     H
+    //              T
+    // vec_deque: [ . . . . . . . . ]
+    let mut vec_deque = VecDeque::<u8>::new();
     let old_capacity = vec_deque.capacity();
 
     // Insert an element to empty VecDeque.
+    // Markers:     H             T
+    // vec_deque: [ . . . . . . . o ]
     let front = kani::any();
     vec_deque.push_front(front);
 
@@ -41,23 +45,28 @@ pub fn reserve_less_capacity_is_no_op() {
     assert_eq!(vec_deque.capacity(), old_capacity);
 }
 
-/// Trigger failure described in the CVE.
+/// Verify that a request to reserve space to `n` elements is a no-op when there's enough capacity.
 #[kani::proof]
-pub fn reserve_less_capacity_cve() {
-    use crate::cve::VecDeque;
-
-    let mut vec_deque = VecDeque::<i8>::new();
+pub fn reserve_more_capacity_ok() {
+    // Start with a default VecDeque object.
+    // Markers:     H
+    //              T
+    // vec_deque: [ . . . . . . . . ]
+    let mut vec_deque = VecDeque::<u8>::new();
     let old_capacity = vec_deque.capacity();
 
     // Insert an element to empty VecDeque.
+    // Markers:     H             T
+    // vec_deque: [ . . . . . . . o ]
     let front = kani::any();
     vec_deque.push_front(front);
 
-    // Change extra capacity to *any* value that is less than current capacity.
+    // Reserve space to *any* value that is more than available capacity.
     let new_capacity: usize = kani::any();
-    kani::assume(new_capacity < old_capacity);
+    kani::assume(new_capacity > (old_capacity - vec_deque.len()));
+    kani::assume(new_capacity <= (MAX_CAPACITY - vec_deque.len()));
     vec_deque.reserve(new_capacity);
 
-    // Capacity should stay the same.
-    assert_eq!(vec_deque.capacity(), old_capacity);
+    // Capacity should increase.
+    assert!(vec_deque.capacity() > new_capacity);
 }

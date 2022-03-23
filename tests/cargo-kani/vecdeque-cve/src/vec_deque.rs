@@ -160,7 +160,7 @@ impl<T, A: Allocator> VecDeque<T, A> {
         //    T             H
         // A [o o o o o o o . . . . . . . . . ]
         //        H T
-        //   [o o . o o o o o ]
+        //   [. . . o o o o o 0 0]
         //          T             H
         // B [. . . o o o o o o o . . . . . . ]
         //              H T
@@ -168,6 +168,7 @@ impl<T, A: Allocator> VecDeque<T, A> {
         //              H                 T
         // C [o o o o o . . . . . . . . . o o ]
 
+        // Tail: 7 Head: 0
         if self.tail <= self.head {
             // A
             // Nop
@@ -176,6 +177,7 @@ impl<T, A: Allocator> VecDeque<T, A> {
             unsafe {
                 self.copy_nonoverlapping(old_capacity, 0, self.head);
             }
+            // Head: 0 + 8 = 8
             self.head += old_capacity;
             debug_assert!(self.head > self.tail);
         } else {
@@ -187,6 +189,9 @@ impl<T, A: Allocator> VecDeque<T, A> {
             self.tail = new_tail;
             debug_assert!(self.head < self.tail);
         }
+        // Head is out of bounds.
+        //                  T  H
+        //   [. . . . . . . o ]
         debug_assert!(self.head < self.cap());
         debug_assert!(self.tail < self.cap());
         debug_assert!(self.cap().count_ones() == 1);
@@ -350,13 +355,14 @@ impl<T, A: Allocator> VecDeque<T, A> {
     /// ```
     //#[stable(feature = "rust1", since = "1.0.0")]
     pub fn reserve(&mut self, additional: usize) {
-        let old_cap = self.cap();
-        let used_cap = self.len() + 1;
-        let new_cap = used_cap
+        let old_cap = self.cap(); // old_cap: 8
+        let used_cap = self.len() + 1; // used_cap: 2
+        let new_cap = used_cap // new_cap: 8
             .checked_add(additional)
             .and_then(|needed_cap| needed_cap.checked_next_power_of_two())
             .expect("capacity overflow");
 
+        // self.capacity(): 7
         if new_cap > self.capacity() {
             self.buf.reserve_exact(used_cap, new_cap - used_cap);
             unsafe {
