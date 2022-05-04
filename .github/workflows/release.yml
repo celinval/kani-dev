@@ -21,10 +21,11 @@ jobs:
 
       - name: Get version
         run: |
+          # CRATE_VERSION follows version semantics spec from: https://semver.org/
           # pkgid is something like file:///home/ubuntu/kani#kani-verifier:0.1.0
           echo "CRATE_VERSION=$(cargo pkgid | cut -d: -f3)" >> $GITHUB_ENV
-          # GITHUB_REF is refs/tags/kani-0.1.0
-          echo "TAG_VERSION=$(echo ${{ github.ref }} | cut -d "-" -f 2)" >> $GITHUB_ENV
+          # GITHUB_REF is refs/tags/kani-${CRATE_VERSION}
+          echo "TAG_VERSION=$(echo ${{ github.ref }} | cut -d "-" -f "2 3")" >> $GITHUB_ENV
           # Note that the above env vars get set for future steps, not this one
       - name: Version Check
         id: versioning
