@@ -12,8 +12,8 @@ use cbmc::goto_program::{Expr, Location, Type};
 use rustc_smir::LayoutOf;
 use rustc_smir::Mutability;
 use rustc_smir::{
-    mir::{Field, Local, Place, ProjectionElem},
     ty::{self, Ty, TypeAndMut, VariantDef},
+    Field, Local, Place, ProjectionElem,
 };
 use rustc_smir::{TagEncoding, Variants};
 use tracing::{debug, trace, warn};

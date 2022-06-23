@@ -12,10 +12,7 @@ extern crate rustc_session;
 extern crate rustc_span;
 extern crate rustc_target;
 
-// TODO: Expand me.
-pub use rustc_ast::ast;
-pub use rustc_ast::ast::Mutability;
-pub use rustc_ast::{Attribute, LitKind};
+pub use rustc_ast::ast::{AttrItem, AttrKind, Attribute, LitKind, Mutability, Path};
 pub use rustc_codegen_ssa::back::archive::ArchiveBuilder;
 pub use rustc_codegen_ssa::back::link::link_binary;
 pub use rustc_codegen_ssa::back::metadata::DefaultMetadataLoader;
@@ -35,8 +32,6 @@ pub use rustc_hir::definitions::DefPathDataName;
 pub use rustc_index::vec::IndexVec;
 pub use rustc_metadata::EncodedMetadata;
 pub use rustc_middle::dep_graph::{WorkProduct, WorkProductId};
-// TODO: Expand me.
-pub use rustc_middle::mir;
 pub use rustc_middle::mir::interpret::{
     read_target_uint, AllocId, Allocation, ConstValue, GlobalAlloc, Scalar,
 };
@@ -45,9 +40,9 @@ pub use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
 pub use rustc_middle::mir::Body;
 pub use rustc_middle::mir::{
     AggregateKind, AssertKind, BasicBlock, BasicBlockData, BinOp, CastKind, Constant, ConstantKind,
-    Field, HasLocalDecls, Local, NullOp, Operand, Place, ProjectionElem, Rvalue, Statement,
-    StatementKind, SwitchTargets, Terminator, TerminatorKind, UnOp, VarDebugInfo,
-    VarDebugInfoContents,
+    CopyNonOverlapping, Field, HasLocalDecls, Local, NullOp, Operand, Place, ProjectionElem,
+    Rvalue, Statement, StatementKind, SwitchTargets, Terminator, TerminatorKind, UnOp,
+    VarDebugInfo, VarDebugInfoContents, RETURN_PLACE,
 };
 pub use rustc_middle::span_bug;
 pub use rustc_middle::ty::adjustment::PointerCast;
@@ -58,12 +53,13 @@ pub use rustc_middle::ty::layout::{
 pub use rustc_middle::ty::print::with_no_trimmed_paths;
 pub use rustc_middle::ty::print::FmtPrinter;
 pub use rustc_middle::ty::print::Printer;
-pub use rustc_middle::ty::query::Providers;
-pub use rustc_middle::ty::subst::InternalSubsts;
-// TODO: Expand self.
+pub use rustc_middle::ty::query::{ExternProviders, Providers};
+pub use rustc_middle::ty::subst::{InternalSubsts, SubstsRef};
+// Self is used for structs that represent types (ty::Slice, ty:RawPtr).
 pub use rustc_middle::ty::{
-    self, AdtDef, Const, ConstKind, FloatTy, Instance, InstanceDef, IntTy, List, PolyFnSig, Ty,
-    TyCtxt, TypeAndMut, TypeFoldable, Uint, UintTy, VariantDef, VtblEntry,
+    self, AdtDef, Binder, BoundRegionKind, BoundVariableKind, Const, ConstKind, FloatTy, Instance,
+    InstanceDef, IntTy, List, ParamEnv, PolyFnSig, Ty, TyCtxt, TypeAndMut, TypeFoldable, Uint,
+    UintTy, VariantDef, VtblEntry,
 };
 pub use rustc_session::config::{CrateType, OutputFilenames, OutputType};
 pub use rustc_session::cstore::DllImport;

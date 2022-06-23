@@ -8,10 +8,9 @@ use crate::codegen_cprover_gotoc::GotocCtx;
 use cbmc::goto_program::{Expr, Stmt, Symbol};
 use cbmc::InternString;
 use kani_metadata::HarnessMetadata;
-use rustc_smir::ast;
 use rustc_smir::ty;
 use rustc_smir::{self, Instance};
-use rustc_smir::{Attribute, LitKind};
+use rustc_smir::{AttrItem, AttrKind, Attribute, LitKind, Path};
 use rustc_smir::{HasLocalDecls, Local};
 use std::collections::BTreeMap;
 use std::convert::TryInto;
@@ -332,9 +331,9 @@ impl<'tcx> GotocCtx<'tcx> {
 }
 
 /// If the attribute is named `kanitool::name`, this extracts `name`
-fn kanitool_attr_name(attr: &ast::Attribute) -> Option<String> {
+fn kanitool_attr_name(attr: &Attribute) -> Option<String> {
     match &attr.kind {
-        ast::AttrKind::Normal(ast::AttrItem { path: ast::Path { segments, .. }, .. }, _)
+        AttrKind::Normal(AttrItem { path: Path { segments, .. }, .. }, _)
             if (!segments.is_empty()) && segments[0].ident.as_str() == "kanitool" =>
         {
             Some(segments[1].ident.as_str().to_string())

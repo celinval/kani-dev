@@ -10,14 +10,13 @@ use crate::unwrap_or_return_codegen_unimplemented_stmt;
 use cbmc::goto_program::{BuiltinFn, Expr, Location, Stmt, Type};
 use cbmc::utils::BUG_REPORT_URL;
 use kani_queries::UserInput;
-use rustc_smir::mir;
 use rustc_smir::ty;
 use rustc_smir::DefId;
 use rustc_smir::LayoutOf;
 use rustc_smir::Span;
 use rustc_smir::{
-    AssertKind, BasicBlock, Operand, Place, Statement, StatementKind, SwitchTargets, Terminator,
-    TerminatorKind,
+    AssertKind, BasicBlock, CopyNonOverlapping, Operand, Place, Statement, StatementKind,
+    SwitchTargets, Terminator, TerminatorKind, RETURN_PLACE,
 };
 use rustc_smir::{FieldsShape, Primitive, TagEncoding, Variants};
 use rustc_smir::{Instance, InstanceDef, Ty};
@@ -64,7 +63,7 @@ impl<'tcx> GotocCtx<'tcx> {
                 if rty.is_unit() {
                     self.codegen_ret_unit()
                 } else {
-                    let p = Place::from(mir::RETURN_PLACE);
+                    let p = Place::from(RETURN_PLACE);
                     let v =
                         unwrap_or_return_codegen_unimplemented_stmt!(self, self.codegen_place(&p))
                             .goto_expr;
@@ -692,7 +691,7 @@ impl<'tcx> GotocCtx<'tcx> {
             }
             StatementKind::StorageLive(_) => Stmt::skip(location), // TODO: fix me
             StatementKind::StorageDead(_) => Stmt::skip(location), // TODO: fix me
-            StatementKind::CopyNonOverlapping(box mir::CopyNonOverlapping {
+            StatementKind::CopyNonOverlapping(box CopyNonOverlapping {
                 ref src,
                 ref dst,
                 ref count,
