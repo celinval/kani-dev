@@ -5,12 +5,13 @@ use super::typ::pointee_type;
 use super::PropertyClass;
 use crate::codegen_cprover_gotoc::GotocCtx;
 use cbmc::goto_program::{ArithmeticOverflowResult, BuiltinFn, Expr, Location, Stmt, Type};
-use rustc_middle::mir::{BasicBlock, Operand, Place};
-use rustc_middle::ty::layout::LayoutOf;
-use rustc_middle::ty::{self, Ty};
-use rustc_middle::ty::{Instance, InstanceDef};
-use rustc_span::Span;
-use rustc_target::abi::InitKind;
+use rustc_smir::ty;
+use rustc_smir::InitKind;
+use rustc_smir::LayoutOf;
+use rustc_smir::Span;
+use rustc_smir::{self, Ty};
+use rustc_smir::{BasicBlock, Operand, Place};
+use rustc_smir::{Instance, InstanceDef};
 use tracing::{debug, warn};
 
 macro_rules! emit_concurrency_warning {

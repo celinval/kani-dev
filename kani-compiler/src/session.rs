@@ -42,7 +42,7 @@ pub fn init_session(args: &ArgMatches) {
     // Initialize the rustc logger using value from RUSTC_LOG. We keep the log control separate
     // because we cannot control the RUSTC log format unless if we match the exact tracing
     // version used by RUSTC.
-    rustc_driver::init_rustc_env_logger();
+    rustc_smir::init_rustc_env_logger();
 
     // Kani panic hook.
     init_panic_hook();

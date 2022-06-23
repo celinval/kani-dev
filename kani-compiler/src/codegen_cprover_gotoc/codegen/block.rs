@@ -4,7 +4,7 @@
 //! This file contains functions related to codegenning MIR blocks into gotoc
 
 use crate::codegen_cprover_gotoc::GotocCtx;
-use rustc_middle::mir::{BasicBlock, BasicBlockData};
+use rustc_smir::{BasicBlock, BasicBlockData};
 
 impl<'tcx> GotocCtx<'tcx> {
     pub fn codegen_block(&mut self, bb: BasicBlock, bbd: &BasicBlockData<'tcx>) {

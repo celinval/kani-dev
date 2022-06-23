@@ -20,6 +20,7 @@ libc = { version = "0.2", optional = true }
 num = { version = "0.4.0", optional = true }
 object = { version = "0.27.0", default-features = false, features = ["std", "read_core", "write", "archive", "coff", "elf", "macho", "pe"], optional = true }
 rustc-demangle = { version = "0.1.21", optional = true }
+rustc_smir = {path = "rustc_smir"}
 serde = { version = "1", optional = true }
 serde_json = { version = "1", optional = true }
 shell-words = "1.0.0"

@@ -5,13 +5,13 @@
 
 use crate::codegen_cprover_gotoc::GotocCtx;
 use cbmc::InternedString;
-use rustc_hir::def_id::DefId;
-use rustc_hir::def_id::LOCAL_CRATE;
-use rustc_hir::definitions::DefPathDataName;
-use rustc_middle::mir::mono::CodegenUnitNameBuilder;
-use rustc_middle::mir::Local;
-use rustc_middle::ty::print::with_no_trimmed_paths;
-use rustc_middle::ty::{Instance, TyCtxt};
+use rustc_smir::with_no_trimmed_paths;
+use rustc_smir::CodegenUnitNameBuilder;
+use rustc_smir::DefId;
+use rustc_smir::DefPathDataName;
+use rustc_smir::Local;
+use rustc_smir::LOCAL_CRATE;
+use rustc_smir::{Instance, TyCtxt};
 use tracing::debug;
 
 impl<'tcx> GotocCtx<'tcx> {

@@ -10,17 +10,17 @@ use crate::unwrap_or_return_codegen_unimplemented_stmt;
 use cbmc::goto_program::{BuiltinFn, Expr, Location, Stmt, Type};
 use cbmc::utils::BUG_REPORT_URL;
 use kani_queries::UserInput;
-use rustc_hir::def_id::DefId;
-use rustc_middle::mir;
-use rustc_middle::mir::{
+use rustc_smir::mir;
+use rustc_smir::ty;
+use rustc_smir::DefId;
+use rustc_smir::LayoutOf;
+use rustc_smir::Span;
+use rustc_smir::{
     AssertKind, BasicBlock, Operand, Place, Statement, StatementKind, SwitchTargets, Terminator,
     TerminatorKind,
 };
-use rustc_middle::ty;
-use rustc_middle::ty::layout::LayoutOf;
-use rustc_middle::ty::{Instance, InstanceDef, Ty};
-use rustc_span::Span;
-use rustc_target::abi::{FieldsShape, Primitive, TagEncoding, Variants};
+use rustc_smir::{FieldsShape, Primitive, TagEncoding, Variants};
+use rustc_smir::{Instance, InstanceDef, Ty};
 use tracing::{debug, info_span, warn};
 
 impl<'tcx> GotocCtx<'tcx> {

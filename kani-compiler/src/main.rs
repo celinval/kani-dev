@@ -12,18 +12,6 @@
 #![feature(box_patterns)]
 #![feature(once_cell)]
 #![feature(rustc_private)]
-extern crate rustc_ast;
-extern crate rustc_codegen_ssa;
-extern crate rustc_data_structures;
-extern crate rustc_driver;
-extern crate rustc_errors;
-extern crate rustc_hir;
-extern crate rustc_index;
-extern crate rustc_metadata;
-extern crate rustc_middle;
-extern crate rustc_session;
-extern crate rustc_span;
-extern crate rustc_target;
 
 #[cfg(feature = "cprover")]
 mod codegen_cprover_gotoc;
@@ -33,7 +21,7 @@ mod session;
 use crate::session::init_session;
 use clap::ArgMatches;
 use kani_queries::{QueryDb, UserInput};
-use rustc_driver::{Callbacks, RunCompiler};
+use rustc_smir::{Callbacks, RunCompiler};
 use std::env;
 use std::ffi::OsStr;
 use std::path::PathBuf;

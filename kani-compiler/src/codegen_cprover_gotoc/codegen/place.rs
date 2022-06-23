@@ -9,13 +9,13 @@ use super::typ::TypeExt;
 use crate::codegen_cprover_gotoc::utils::slice_fat_ptr;
 use crate::codegen_cprover_gotoc::GotocCtx;
 use cbmc::goto_program::{Expr, Location, Type};
-use rustc_hir::Mutability;
-use rustc_middle::ty::layout::LayoutOf;
-use rustc_middle::{
+use rustc_smir::LayoutOf;
+use rustc_smir::Mutability;
+use rustc_smir::{
     mir::{Field, Local, Place, ProjectionElem},
     ty::{self, Ty, TypeAndMut, VariantDef},
 };
-use rustc_target::abi::{TagEncoding, Variants};
+use rustc_smir::{TagEncoding, Variants};
 use tracing::{debug, trace, warn};
 
 /// A projection in Kani can either be to a type (the normal case),

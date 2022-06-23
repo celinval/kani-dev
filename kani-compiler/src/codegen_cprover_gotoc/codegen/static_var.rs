@@ -5,9 +5,9 @@
 
 use crate::codegen_cprover_gotoc::GotocCtx;
 use cbmc::goto_program::Symbol;
-use rustc_hir::def_id::DefId;
-use rustc_middle::mir::mono::MonoItem;
-use rustc_middle::ty::{subst::InternalSubsts, Instance};
+use rustc_smir::DefId;
+use rustc_smir::MonoItem;
+use rustc_smir::{Instance, InternalSubsts};
 use tracing::debug;
 
 /// Separator used to generate function static variable names (<function_name>::<variable_name>).

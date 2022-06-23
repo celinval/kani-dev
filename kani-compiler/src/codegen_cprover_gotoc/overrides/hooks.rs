@@ -14,10 +14,11 @@ use crate::codegen_cprover_gotoc::GotocCtx;
 use crate::unwrap_or_return_codegen_unimplemented_stmt;
 use cbmc::goto_program::{BuiltinFn, Expr, Location, Stmt, Type};
 use kani_queries::UserInput;
-use rustc_middle::mir::{BasicBlock, Place};
-use rustc_middle::ty::print::with_no_trimmed_paths;
-use rustc_middle::ty::{Instance, TyCtxt};
-use rustc_span::Span;
+use rustc_smir::with_no_trimmed_paths;
+use rustc_smir::Span;
+use rustc_smir::Symbol;
+use rustc_smir::{BasicBlock, Place};
+use rustc_smir::{Instance, TyCtxt};
 use std::rc::Rc;
 use tracing::{debug, warn};
 
@@ -37,7 +38,7 @@ pub trait GotocHook<'tcx> {
 }
 
 fn matches_function(tcx: TyCtxt, instance: Instance, attr_name: &str) -> bool {
-    let attr_sym = rustc_span::symbol::Symbol::intern(attr_name);
+    let attr_sym = Symbol::intern(attr_name);
     if let Some(attr_id) = tcx.all_diagnostic_items(()).name_to_id.get(&attr_sym) {
         if instance.def.def_id() == *attr_id {
             debug!("matched: {:?} {:?}", attr_id, attr_sym);

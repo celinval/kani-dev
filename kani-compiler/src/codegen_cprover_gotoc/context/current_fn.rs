@@ -3,10 +3,10 @@
 
 use crate::codegen_cprover_gotoc::GotocCtx;
 use cbmc::goto_program::Stmt;
-use rustc_middle::mir::BasicBlock;
-use rustc_middle::mir::Body;
-use rustc_middle::ty::Instance;
-use rustc_middle::ty::PolyFnSig;
+use rustc_smir::BasicBlock;
+use rustc_smir::Body;
+use rustc_smir::Instance;
+use rustc_smir::PolyFnSig;
 
 /// This structure represents useful data about the function we are currently compiling.
 #[derive(Debug)]

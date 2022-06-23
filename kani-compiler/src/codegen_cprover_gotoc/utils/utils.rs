@@ -6,9 +6,9 @@ use crate::codegen_cprover_gotoc::codegen::PropertyClass;
 use crate::codegen_cprover_gotoc::GotocCtx;
 use cbmc::goto_program::{Expr, ExprValue, Location, Stmt, SymbolTable, Type};
 use cbmc::{btree_string_map, InternedString};
-use rustc_errors::FatalError;
-use rustc_middle::ty::layout::LayoutOf;
-use rustc_middle::ty::{Instance, Ty};
+use rustc_smir::FatalError;
+use rustc_smir::LayoutOf;
+use rustc_smir::{Instance, Ty};
 use tracing::debug;
 
 // Should move into rvalue

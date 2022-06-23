@@ -5,16 +5,15 @@ use crate::codegen_cprover_gotoc::GotocCtx;
 use crate::unwrap_or_return_codegen_unimplemented;
 use cbmc::goto_program::{DatatypeComponent, Expr, Location, Stmt, Symbol, Type};
 use cbmc::NO_PRETTY_NAME;
-use rustc_ast::ast::Mutability;
-use rustc_middle::mir::interpret::{
-    read_target_uint, AllocId, Allocation, ConstValue, GlobalAlloc, Scalar,
-};
-use rustc_middle::mir::{Constant, ConstantKind, Operand};
-use rustc_middle::ty::layout::LayoutOf;
-use rustc_middle::ty::{self, Const, ConstKind, FloatTy, Instance, IntTy, Ty, Uint, UintTy};
-use rustc_span::def_id::DefId;
-use rustc_span::Span;
-use rustc_target::abi::{FieldsShape, Size, TagEncoding, Variants};
+use rustc_smir::ty;
+use rustc_smir::DefId;
+use rustc_smir::LayoutOf;
+use rustc_smir::Mutability;
+use rustc_smir::Span;
+use rustc_smir::{self, Const, ConstKind, FloatTy, Instance, IntTy, Ty, Uint, UintTy};
+use rustc_smir::{read_target_uint, AllocId, Allocation, ConstValue, GlobalAlloc, Scalar};
+use rustc_smir::{Constant, ConstantKind, Operand};
+use rustc_smir::{FieldsShape, Size, TagEncoding, Variants};
 use tracing::debug;
 
 enum AllocData<'a> {

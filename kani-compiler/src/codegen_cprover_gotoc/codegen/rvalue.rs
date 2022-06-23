@@ -11,11 +11,12 @@ use cbmc::MachineModel;
 use cbmc::NO_PRETTY_NAME;
 use cbmc::{btree_string_map, InternString, InternedString};
 use num::bigint::BigInt;
-use rustc_middle::mir::{AggregateKind, BinOp, CastKind, NullOp, Operand, Place, Rvalue, UnOp};
-use rustc_middle::ty::adjustment::PointerCast;
-use rustc_middle::ty::layout::LayoutOf;
-use rustc_middle::ty::{self, Instance, IntTy, Ty, TyCtxt, UintTy, VtblEntry};
-use rustc_target::abi::{FieldsShape, Primitive, TagEncoding, Variants};
+use rustc_smir::ty;
+use rustc_smir::LayoutOf;
+use rustc_smir::PointerCast;
+use rustc_smir::{self, Instance, IntTy, Ty, TyCtxt, UintTy, VtblEntry};
+use rustc_smir::{AggregateKind, BinOp, CastKind, NullOp, Operand, Place, Rvalue, UnOp};
+use rustc_smir::{FieldsShape, Primitive, TagEncoding, Variants};
 use tracing::{debug, warn};
 
 impl<'tcx> GotocCtx<'tcx> {
@@ -1061,7 +1062,7 @@ impl<'tcx> GotocCtx<'tcx> {
         // be a fat pointer, but the adt (containing the fat pointer) will
         // itself be sized.
         assert!(
-            src_mir_type.is_sized(self.tcx.at(rustc_span::DUMMY_SP), ty::ParamEnv::reveal_all())
+            src_mir_type.is_sized(self.tcx.at(rustc_smir::DUMMY_SP), ty::ParamEnv::reveal_all())
         );
 
         // The src type cannot be a pointer to a dynamic trait object, otherwise

@@ -20,8 +20,8 @@ use std::fs::File;
 use std::io::{self, Read, Seek};
 use std::path::{Path, PathBuf};
 
-use rustc_codegen_ssa::back::archive::ArchiveBuilder;
-use rustc_session::Session;
+use rustc_smir::ArchiveBuilder;
+use rustc_smir::Session;
 
 use object::read::archive::ArchiveFile;
 use object::ReadCache;
@@ -183,8 +183,8 @@ impl<'a> ArchiveBuilder<'a> for ArArchiveBuilder<'a> {
     fn inject_dll_import_lib(
         &mut self,
         _lib_name: &str,
-        _dll_imports: &[rustc_session::cstore::DllImport],
-        _tmpdir: &rustc_data_structures::temp_dir::MaybeTempDir,
+        _dll_imports: &[rustc_smir::DllImport],
+        _tmpdir: &rustc_smir::MaybeTempDir,
     ) {
         unimplemented!("injecting dll imports is not supported");
     }

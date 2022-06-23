@@ -5,29 +5,28 @@ use cbmc::goto_program::{DatatypeComponent, Expr, Location, Parameter, Symbol, S
 use cbmc::utils::aggr_tag;
 use cbmc::{btree_map, NO_PRETTY_NAME};
 use cbmc::{InternString, InternedString};
-use rustc_ast::ast::Mutability;
-use rustc_index::vec::IndexVec;
-use rustc_middle::mir::{HasLocalDecls, Local, Operand, Place, Rvalue};
-use rustc_middle::ty::layout::LayoutOf;
-use rustc_middle::ty::print::with_no_trimmed_paths;
-use rustc_middle::ty::print::FmtPrinter;
-use rustc_middle::ty::subst::InternalSubsts;
-use rustc_middle::ty::{
+use rustc_smir::ty;
+use rustc_smir::ty::layout::HasParamEnv;
+use rustc_smir::with_no_trimmed_paths;
+use rustc_smir::DefId;
+use rustc_smir::FmtPrinter;
+use rustc_smir::IndexVec;
+use rustc_smir::InternalSubsts;
+use rustc_smir::LayoutOf;
+use rustc_smir::Mutability;
+use rustc_smir::SpecAbi;
+use rustc_smir::{
     self, AdtDef, FloatTy, Instance, IntTy, PolyFnSig, Ty, UintTy, VariantDef, VtblEntry,
 };
-use rustc_middle::ty::{List, TypeFoldable};
-use rustc_span::def_id::DefId;
-use rustc_target::abi::{
-    Abi::Vector, FieldsShape, Integer, Layout, Primitive, TagEncoding, VariantIdx, Variants,
-};
-use rustc_target::spec::abi::Abi;
+use rustc_smir::{Abi, FieldsShape, Integer, Layout, Primitive, TagEncoding, VariantIdx, Variants};
+use rustc_smir::{HasLocalDecls, Local, Operand, Place, Rvalue};
+use rustc_smir::{List, TypeFoldable};
 use std::collections::BTreeMap;
 use std::convert::TryInto;
 use std::fmt::Debug;
 use std::iter;
 use std::iter::FromIterator;
 use tracing::{debug, trace, warn};
-use ty::layout::HasParamEnv;
 
 /// Map the unit type to an empty struct
 ///
@@ -261,7 +260,7 @@ impl<'tcx> GotocCtx<'tcx> {
     pub fn is_unsized(&self, t: Ty<'tcx>) -> bool {
         !self
             .monomorphize(t)
-            .is_sized(self.tcx.at(rustc_span::DUMMY_SP), ty::ParamEnv::reveal_all())
+            .is_sized(self.tcx.at(rustc_smir::DUMMY_SP), ty::ParamEnv::reveal_all())
     }
 
     /// Is the MIR type a ref of an unsized type (i.e. one represented by a fat pointer?)
@@ -464,8 +463,8 @@ impl<'tcx> GotocCtx<'tcx> {
     }
 
     pub fn ty_pretty_name(&self, t: Ty<'tcx>) -> InternedString {
-        use rustc_hir::def::Namespace;
-        use rustc_middle::ty::print::Printer;
+        use rustc_smir::Namespace;
+        use rustc_smir::Printer;
         let printer = FmtPrinter::new(self.tcx, Namespace::TypeNS);
 
         // Monomorphizing the type ensures we get a cannonical form for dynamic trait
@@ -785,7 +784,7 @@ impl<'tcx> GotocCtx<'tcx> {
     /// See `make_call_args` in kani/compiler/rustc_mir/src/transform/inline.rs
     pub fn ty_needs_closure_untupled(&self, ty: Ty<'tcx>) -> bool {
         match ty.kind() {
-            ty::FnDef(..) | ty::FnPtr(..) => ty.fn_sig(self.tcx).abi() == Abi::RustCall,
+            ty::FnDef(..) | ty::FnPtr(..) => ty.fn_sig(self.tcx).abi() == SpecAbi::RustCall,
             _ => unreachable!("Can't treat type as a function: {:?}", ty),
         }
     }
@@ -1290,7 +1289,7 @@ impl<'tcx> GotocCtx<'tcx> {
         debug! {"handling simd with layout {:?}", layout};
 
         let (element, size) = match layout {
-            Vector { element, count } => (element, count),
+            Abi::Vector { element, count } => (element, count),
             _ => unreachable!(),
         };
 

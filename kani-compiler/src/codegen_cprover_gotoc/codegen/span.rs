@@ -5,8 +5,8 @@
 
 use crate::codegen_cprover_gotoc::GotocCtx;
 use cbmc::goto_program::Location;
-use rustc_middle::mir::{Local, VarDebugInfo, VarDebugInfoContents};
-use rustc_span::Span;
+use rustc_smir::Span;
+use rustc_smir::{Local, VarDebugInfo, VarDebugInfoContents};
 
 impl<'tcx> GotocCtx<'tcx> {
     pub fn codegen_span(&self, sp: &Span) -> Location {

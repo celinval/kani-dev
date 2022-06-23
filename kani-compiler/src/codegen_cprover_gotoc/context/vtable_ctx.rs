@@ -20,7 +20,7 @@ use crate::codegen_cprover_gotoc::GotocCtx;
 use cbmc::goto_program::{Stmt, Type};
 use cbmc::InternedString;
 use kani_metadata::{CallSite, PossibleMethodEntry, TraitDefinedMethod, VtableCtxResults};
-use rustc_data_structures::stable_map::FxHashMap;
+use rustc_smir::FxHashMap;
 use tracing::debug;
 
 /// This structure represents data about the vtable that we construct
@@ -74,7 +74,7 @@ impl VtableCtx {
 
     /// The vtable index for drop
     pub fn drop_index() -> usize {
-        rustc_middle::ty::COMMON_VTABLE_ENTRIES_DROPINPLACE
+        rustc_smir::ty::COMMON_VTABLE_ENTRIES_DROPINPLACE
     }
 }
 

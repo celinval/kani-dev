@@ -9,20 +9,23 @@ use cbmc::goto_program::{symtab_transformer, Location};
 use cbmc::InternedString;
 use kani_metadata::KaniMetadata;
 use kani_queries::{QueryDb, UserInput};
-use rustc_codegen_ssa::traits::CodegenBackend;
-use rustc_codegen_ssa::{CodegenResults, CrateInfo};
-use rustc_data_structures::fx::FxHashMap;
-use rustc_errors::ErrorGuaranteed;
-use rustc_metadata::EncodedMetadata;
-use rustc_middle::dep_graph::{WorkProduct, WorkProductId};
-use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
-use rustc_middle::ty::query::Providers;
-use rustc_middle::ty::{self, TyCtxt};
-use rustc_session::config::{OutputFilenames, OutputType};
-use rustc_session::cstore::MetadataLoaderDyn;
-use rustc_session::Session;
-use rustc_target::abi::Endian;
-use rustc_target::spec::PanicStrategy;
+use rustc_smir::ty;
+use rustc_smir::CodegenBackend;
+use rustc_smir::CrateType;
+use rustc_smir::DefaultMetadataLoader;
+use rustc_smir::EncodedMetadata;
+use rustc_smir::Endian;
+use rustc_smir::ErrorGuaranteed;
+use rustc_smir::FxHashMap;
+use rustc_smir::MetadataLoaderDyn;
+use rustc_smir::PanicStrategy;
+use rustc_smir::Providers;
+use rustc_smir::Session;
+use rustc_smir::{self, TyCtxt};
+use rustc_smir::{CodegenResults, CrateInfo};
+use rustc_smir::{CodegenUnit, MonoItem};
+use rustc_smir::{OutputFilenames, OutputType};
+use rustc_smir::{WorkProduct, WorkProductId};
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::io::BufWriter;
@@ -44,7 +47,7 @@ impl GotocCodegenBackend {
 
 impl CodegenBackend for GotocCodegenBackend {
     fn metadata_loader(&self) -> Box<MetadataLoaderDyn> {
-        Box::new(rustc_codegen_ssa::back::metadata::DefaultMetadataLoader)
+        Box::new(DefaultMetadataLoader)
     }
 
     fn provide(&self, _providers: &mut Providers) {}
@@ -202,18 +205,18 @@ impl CodegenBackend for GotocCodegenBackend {
         // But let's be careful and fail loudly if we get conflicting requests:
         let requested_crate_types = sess.crate_types();
         // Quit successfully if we don't need an `rlib`:
-        if !requested_crate_types.contains(&rustc_session::config::CrateType::Rlib) {
+        if !requested_crate_types.contains(&CrateType::Rlib) {
             return Ok(());
         }
         // Fail loudly if we need an `rlib` (above!) and *also* an executable, which
         // we can't produce, and can't easily suppress in `link_binary`:
-        if requested_crate_types.contains(&rustc_session::config::CrateType::Executable) {
+        if requested_crate_types.contains(&CrateType::Executable) {
             sess.err("Build crate-type requested both rlib and executable, and Kani cannot handle this situation");
             sess.abort_if_errors();
         }
 
         // All this ultimately boils down to is emitting an `rlib` that contains just one file: `lib.rmeta`
-        use rustc_codegen_ssa::back::link::link_binary;
+        use rustc_smir::link_binary;
         link_binary::<crate::codegen_cprover_gotoc::archive::ArArchiveBuilder<'_>>(
             sess,
             &codegen_results,

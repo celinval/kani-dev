@@ -5,10 +5,10 @@
 
 use crate::codegen_cprover_gotoc::GotocCtx;
 use cbmc::goto_program::Location;
-use rustc_middle::mir::Body;
-use rustc_middle::ty::print::with_no_trimmed_paths;
-use rustc_middle::ty::Instance;
-use rustc_span::def_id::DefId;
+use rustc_smir::with_no_trimmed_paths;
+use rustc_smir::Body;
+use rustc_smir::DefId;
+use rustc_smir::Instance;
 use std::cell::RefCell;
 use std::lazy::SyncLazy;
 use std::panic;
