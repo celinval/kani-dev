@@ -12,7 +12,7 @@ use crate::codegen_cprover_gotoc::codegen::PropertyClass;
 use crate::codegen_cprover_gotoc::utils;
 use crate::codegen_cprover_gotoc::GotocCtx;
 use crate::unwrap_or_return_codegen_unimplemented_stmt;
-use cbmc::goto_program::{BuiltinFn, Expr, Location, Stmt, Type};
+use cbmc::goto_program::{BuiltinFn, CIntType, Expr, Location, Stmt, Type};
 use kani_queries::UserInput;
 use rustc_middle::mir::{BasicBlock, Place};
 use rustc_middle::ty::print::with_no_trimmed_paths;
@@ -317,6 +317,53 @@ impl<'tcx> GotocHook<'tcx> for SliceFromRawPart {
     }
 }
 
+struct MemCmp;
+
+/// Rust function signature for `memcmp` differs from CBMC built-in function.
+///
+/// Rust follows llvm's intrinsic and take `*cost u8` as arguments:
+/// ```rust
+/// fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> ffi::c_int;
+/// ```
+///
+/// While CBMC's follow C's definition which takes a `void` pointer.
+/// ```c
+/// int memcmp(const void* ptr1, const void* ptr2, size_t num);
+/// ```
+/// See https://github.com/model-checking/kani/issues/1350.
+impl<'tcx> GotocHook<'tcx> for MemCmp {
+    fn hook_applies(&self, tcx: TyCtxt<'tcx>, instance: Instance<'tcx>) -> bool {
+        // Same logic as GotocCtx::symbol_name()
+        let name = tcx.symbol_name(instance).name.to_string();
+        name == "memcmp"
+    }
+
+    fn handle(
+        &self,
+        ctx: &mut GotocCtx<'tcx>,
+        instance: Instance<'tcx>,
+        mut fargs: Vec<Expr>,
+        assign_to: Place<'tcx>,
+        target: Option<BasicBlock>,
+        span: Option<Span>,
+    ) -> Stmt {
+        tracing::trace!(?instance, ?fargs, "memcmp hook");
+        assert_eq!(fargs.len(), 3, "Function memcmp should take 3 arguments");
+        let loc = ctx.codegen_span_option(span);
+        let sz = fargs.pop().unwrap().clone();
+        let val = fargs.pop().unwrap().cast_to(Type::void_pointer());
+        let dst = fargs.pop().unwrap().cast_to(Type::void_pointer());
+        let memcmp = BuiltinFn::Memcmp
+            .call(vec![dst, val, sz], loc)
+            .cast_to(Type::Signedbv { width: CIntType::Int.sizeof_in_bits(&ctx.symbol_table) });
+        let memcmp_stmt = ctx.codegen_expr_to_place(&assign_to, memcmp);
+        Stmt::block(
+            vec![memcmp_stmt, Stmt::goto(ctx.current_fn().find_label(&target.unwrap()), loc)],
+            loc,
+        )
+    }
+}
+
 pub fn fn_hooks<'tcx>() -> GotocHooks<'tcx> {
     GotocHooks {
         hooks: vec![
@@ -327,6 +374,7 @@ pub fn fn_hooks<'tcx>() -> GotocHooks<'tcx> {
             Rc::new(Nondet),
             Rc::new(RustAlloc),
             Rc::new(SliceFromRawPart),
+            Rc::new(MemCmp),
         ],
     }
 }
