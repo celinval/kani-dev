@@ -12,12 +12,13 @@ use crate::codegen_cprover_gotoc::codegen::PropertyClass;
 use crate::codegen_cprover_gotoc::utils;
 use crate::codegen_cprover_gotoc::GotocCtx;
 use crate::unwrap_or_return_codegen_unimplemented_stmt;
-use cbmc::goto_program::{BuiltinFn, CIntType, Expr, Location, Stmt, Type};
+use cbmc::goto_program::{BuiltinFn, Expr, Location, Stmt, Type};
 use kani_queries::UserInput;
 use rustc_middle::mir::{BasicBlock, Place};
 use rustc_middle::ty::print::with_no_trimmed_paths;
 use rustc_middle::ty::{Instance, TyCtxt};
 use rustc_span::Span;
+use std::collections::HashMap;
 use std::rc::Rc;
 use tracing::{debug, warn};
 
@@ -317,11 +318,24 @@ impl<'tcx> GotocHook<'tcx> for SliceFromRawPart {
     }
 }
 
-struct MemCmp;
+struct BuiltinHook {
+    functions: HashMap<String, BuiltinFn>,
+}
 
-/// Rust function signature for `memcmp` differs from CBMC built-in function.
+impl BuiltinHook {
+    fn new() -> Self {
+        BuiltinHook {
+            functions: BuiltinFn::list_all()
+                .iter()
+                .map(|builtin| (builtin.to_string(), *builtin))
+                .collect(),
+        }
+    }
+}
+
+/// Rust function signature for many libc functions differs from CBMC built-in functions.
 ///
-/// Rust follows llvm's intrinsic and take `*cost u8` as arguments:
+/// E.g.: Rust's `memcmp` follows llvm's intrinsic and take `*cost u8` arguments:
 /// ```rust
 /// fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> ffi::c_int;
 /// ```
@@ -330,37 +344,52 @@ struct MemCmp;
 /// ```c
 /// int memcmp(const void* ptr1, const void* ptr2, size_t num);
 /// ```
+///
 /// See https://github.com/model-checking/kani/issues/1350.
-impl<'tcx> GotocHook<'tcx> for MemCmp {
+impl<'tcx> GotocHook<'tcx> for BuiltinHook {
     fn hook_applies(&self, tcx: TyCtxt<'tcx>, instance: Instance<'tcx>) -> bool {
         // Same logic as GotocCtx::symbol_name()
         let name = tcx.symbol_name(instance).name.to_string();
-        name == "memcmp"
+        self.functions.contains_key(&name)
     }
 
     fn handle(
         &self,
         ctx: &mut GotocCtx<'tcx>,
         instance: Instance<'tcx>,
-        mut fargs: Vec<Expr>,
+        fargs: Vec<Expr>,
         assign_to: Place<'tcx>,
         target: Option<BasicBlock>,
         span: Option<Span>,
     ) -> Stmt {
-        tracing::trace!(?instance, ?fargs, "memcmp hook");
-        assert_eq!(fargs.len(), 3, "Function memcmp should take 3 arguments");
+        tracing::trace!(?instance, ?fargs, "built-in hook");
+        let name = ctx.tcx.symbol_name(instance).name.to_string();
+        let builtin_fn = self.functions.get(&name).unwrap();
+        let builtin_params = builtin_fn.param_types();
+        assert_eq!(
+            fargs.len(),
+            builtin_params.len(),
+            "Unexpected number of parameters for {}",
+            name
+        );
+        let builtin_args = fargs
+            .iter()
+            .zip(builtin_params)
+            .map(|(args, typ)| args.clone().cast_to(typ))
+            .collect::<Vec<_>>();
+
         let loc = ctx.codegen_span_option(span);
-        let sz = fargs.pop().unwrap().clone();
-        let val = fargs.pop().unwrap().cast_to(Type::void_pointer());
-        let dst = fargs.pop().unwrap().cast_to(Type::void_pointer());
-        let memcmp = BuiltinFn::Memcmp
-            .call(vec![dst, val, sz], loc)
-            .cast_to(Type::Signedbv { width: CIntType::Int.sizeof_in_bits(&ctx.symbol_table) });
-        let memcmp_stmt = ctx.codegen_expr_to_place(&assign_to, memcmp);
-        Stmt::block(
-            vec![memcmp_stmt, Stmt::goto(ctx.current_fn().find_label(&target.unwrap()), loc)],
-            loc,
-        )
+        let return_ty = ctx.place_ty(&assign_to);
+        let stmt = if return_ty.is_never() || return_ty.is_unit() {
+            builtin_fn.call(builtin_args, loc).as_stmt(loc)
+        } else {
+            let call = builtin_fn.call(builtin_args, loc).cast_to(ctx.codegen_ty(return_ty));
+            ctx.codegen_expr_to_place(&assign_to, call)
+        };
+
+        target.map_or(stmt.clone(), |bb| {
+            Stmt::block(vec![stmt, Stmt::goto(ctx.current_fn().find_label(&bb), loc)], loc)
+        })
     }
 }
 
@@ -374,7 +403,7 @@ pub fn fn_hooks<'tcx>() -> GotocHooks<'tcx> {
             Rc::new(Nondet),
             Rc::new(RustAlloc),
             Rc::new(SliceFromRawPart),
-            Rc::new(MemCmp),
+            Rc::new(BuiltinHook::new()),
         ],
     }
 }

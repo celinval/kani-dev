@@ -1,6 +1,7 @@
 // Copyright Kani Contributors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-
+//
+// kani-flags: --enable-unstable --run-sanity-checks
 #[kani::proof]
 #[kani::unwind(2)]
 fn main() {
