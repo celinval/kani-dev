@@ -37,7 +37,7 @@ strip = "debuginfo"
 [workspace]
 members = [
   "library/kani",
-  "library/std",
+  "library/kani_std",
   "tools/bookrunner",
   "tools/compiletest",
   "tools/make-kani-release",
