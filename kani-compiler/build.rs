@@ -64,6 +64,6 @@ pub fn main() {
     let lib_out = path_str!([&out_dir, "lib"]);
     setup_lib(&out_dir, &lib_out, "kani");
     setup_lib(&out_dir, &lib_out, "kani_macros");
-    setup_lib(&out_dir, &lib_out, "std");
+    setup_lib(&out_dir, &lib_out, "kani_std");
     println!("cargo:rustc-env=KANI_LIB_PATH={}", lib_out);
 }
