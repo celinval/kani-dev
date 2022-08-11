@@ -21,6 +21,7 @@ macro_rules! path_str {
 fn setup_lib(out_dir: &str, lib_out: &str, lib: &str) {
     let kani_lib = vec!["..", "library", lib];
     println!("cargo:rerun-if-changed={}", path_str!(kani_lib));
+    let _target = env::var("TARGET").unwrap();
 
     let mut kani_lib_toml = kani_lib;
     kani_lib_toml.push("Cargo.toml");
@@ -34,9 +35,13 @@ fn setup_lib(out_dir: &str, lib_out: &str, lib: &str) {
         lib_out,
         "--target-dir",
         out_dir,
+        //"-Z",
+        //"build-std",
+        //"--target",
+        //&target,
     ];
     let result = Command::new("cargo")
-        .env("CARGO_ENCODED_RUSTFLAGS", "--cfg=kani")
+        .env("CARGO_ENCODED_RUSTFLAGS", ["--cfg=kani", "-Z", "always-encode-mir"].join("\x1f"))
         .args(args)
         .status()
         .unwrap();

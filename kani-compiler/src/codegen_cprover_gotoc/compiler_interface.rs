@@ -3,6 +3,7 @@
 
 //! This file contains the code necessary to interface with the compiler backend
 
+use crate::codegen_cprover_gotoc::reachability::collect_reachable_items;
 use crate::codegen_cprover_gotoc::GotocCtx;
 use bitflags::_core::any::Any;
 use cbmc::goto_program::{symtab_transformer, Location};
@@ -64,9 +65,11 @@ impl CodegenBackend for GotocCodegenBackend {
 
         let codegen_units: &'tcx [CodegenUnit<'_>] = tcx.collect_and_partition_mono_items(()).1;
         let mut c = GotocCtx::new(tcx, self.queries.clone());
+        collect_reachable_items(tcx, &c, codegen_units);
 
         // we first declare all functions
         for cgu in codegen_units {
+            debug!(?cgu, "codegen_crate");
             let items = cgu.items_in_deterministic_order(tcx);
             for (item, _) in items {
                 match item {
