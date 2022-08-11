@@ -261,6 +261,12 @@ impl<'tcx> GotocCtx<'tcx> {
         self.reset_current_fn();
     }
 
+    pub fn is_proof_harness(&self, instance: &Instance) -> bool {
+        let all_attributes = self.tcx.get_attrs_unchecked(instance.def_id());
+        let (proof_attributes, _) = partition_kanitool_attributes(all_attributes);
+        !proof_attributes.is_empty()
+    }
+
     /// This updates the goto context with any information that should be accumulated from a function's
     /// attributes.
     ///

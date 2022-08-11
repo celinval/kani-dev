@@ -65,6 +65,8 @@ fn rustc_gotoc_flags(lib_path: &str) -> Vec<String> {
         "crate-attr=feature(register_tool)",
         "-Z",
         "crate-attr=register_tool(kanitool)",
+        "-Z",
+        "always-encode-mir",
         "-L",
         lib_path,
         "--extern",

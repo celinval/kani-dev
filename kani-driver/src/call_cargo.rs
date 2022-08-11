@@ -66,7 +66,7 @@ impl KaniSession {
         args.push("--target-dir".into());
         args.push(target_dir.into());
 
-        if self.args.verbose {
+        if self.args.verbose || self.args.debug {
             args.push("-v".into());
         }
 
