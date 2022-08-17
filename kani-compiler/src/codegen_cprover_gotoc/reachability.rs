@@ -33,9 +33,24 @@ impl<'tcx> MonoItemsCollector<'tcx> {
     }
 
     /// TODO: Implement this.
+    /// Traverses the call graph starting from the given root. For every function, we visit all
+    /// instruction looking for the items that should be included in the compilation.
     fn reachable_items(&mut self) {}
 }
 
+/// Visit every instruction in a function and collect the following:
+/// 1. Every function / method / closures that may be directly invoked.
+/// 2. Every function / method / closures that may have their address taken.
+/// 3. Every method that compose the impl of a trait for a given type when there's a conversion
+/// from the type to the trait.
+///    - I.e.: If we visit the following code:
+///      ```
+///      let var = MyType::new();
+///      let ptr : &dyn MyTrait = &var;
+///      ```
+///      We collect the entire implementation of `MyTrait` for `MyType`.
+/// 4. Every Static variable that is referenced in the function.
+/// 5. Drop glue?
 impl<'tcx> MirVisitor<'tcx> for MonoItemsCollector<'tcx> {}
 
 pub fn collect_reachable_items<'tcx>(
