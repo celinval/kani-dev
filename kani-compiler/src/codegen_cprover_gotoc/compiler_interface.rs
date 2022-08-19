@@ -65,71 +65,73 @@ impl CodegenBackend for GotocCodegenBackend {
 
         let codegen_units: &'tcx [CodegenUnit<'_>] = tcx.collect_and_partition_mono_items(()).1;
         let mut c = GotocCtx::new(tcx, self.queries.clone());
-        collect_reachable_items(tcx, &c, codegen_units);
+        let reach_items = collect_reachable_items(tcx, &c, codegen_units);
+        debug!(?reach_items, "collected_items");
 
         // we first declare all functions
         for cgu in codegen_units {
             debug!(?cgu, "codegen_crate");
             let items = cgu.items_in_deterministic_order(tcx);
-            for (item, _) in items {
-                match item {
-                    MonoItem::Fn(instance) => {
-                        c.call_with_panic_debug_info(
-                            |ctx| ctx.declare_function(instance),
-                            format!("declare_function: {}", c.readable_instance_name(instance)),
-                            instance.def_id(),
+            let missing =
+                items.iter().filter(|(item, _)| !reach_items.contains(item)).collect::<Vec<_>>();
+            debug!(?missing, "missing items");
+        }
+
+        for item in &reach_items {
+            match *item {
+                MonoItem::Fn(instance) => {
+                    c.call_with_panic_debug_info(
+                        |ctx| ctx.declare_function(instance),
+                        format!("declare_function: {}", c.readable_instance_name(instance)),
+                        instance.def_id(),
+                    );
+                }
+                MonoItem::Static(def_id) => {
+                    c.call_with_panic_debug_info(
+                        |ctx| ctx.declare_static(def_id, *item),
+                        format!("declare_static: {:?}", def_id),
+                        def_id,
+                    );
+                }
+                MonoItem::GlobalAsm(_) => {
+                    if !self.queries.get_ignore_global_asm() {
+                        let error_msg = format!(
+                            "Crate {} contains global ASM, which is not supported by Kani. Rerun with `--enable-unstable --ignore-global-asm` to suppress this error (**Verification results may be impacted**).",
+                            c.short_crate_name()
                         );
-                    }
-                    MonoItem::Static(def_id) => {
-                        c.call_with_panic_debug_info(
-                            |ctx| ctx.declare_static(def_id, item),
-                            format!("declare_static: {:?}", def_id),
-                            def_id,
+                        tcx.sess.err(&error_msg);
+                    } else {
+                        warn!(
+                            "Ignoring global ASM in crate {}. Verification results may be impacted.",
+                            c.short_crate_name()
                         );
-                    }
-                    MonoItem::GlobalAsm(_) => {
-                        if !self.queries.get_ignore_global_asm() {
-                            let error_msg = format!(
-                                "Crate {} contains global ASM, which is not supported by Kani. Rerun with `--enable-unstable --ignore-global-asm` to suppress this error (**Verification results may be impacted**).",
-                                c.short_crate_name()
-                            );
-                            tcx.sess.err(&error_msg);
-                        } else {
-                            warn!(
-                                "Ignoring global ASM in crate {}. Verification results may be impacted.",
-                                c.short_crate_name()
-                            );
-                        }
                     }
                 }
             }
         }
 
         // then we move on to codegen
-        for cgu in codegen_units {
-            let items = cgu.items_in_deterministic_order(tcx);
-            for (item, _) in items {
-                match item {
-                    MonoItem::Fn(instance) => {
-                        c.call_with_panic_debug_info(
-                            |ctx| ctx.codegen_function(instance),
-                            format!(
-                                "codegen_function: {}\n{}",
-                                c.readable_instance_name(instance),
-                                c.symbol_name(instance)
-                            ),
-                            instance.def_id(),
-                        );
-                    }
-                    MonoItem::Static(def_id) => {
-                        c.call_with_panic_debug_info(
-                            |ctx| ctx.codegen_static(def_id, item),
-                            format!("codegen_static: {:?}", def_id),
-                            def_id,
-                        );
-                    }
-                    MonoItem::GlobalAsm(_) => {} // We have already warned above
+        for item in reach_items {
+            match item {
+                MonoItem::Fn(instance) => {
+                    c.call_with_panic_debug_info(
+                        |ctx| ctx.codegen_function(instance),
+                        format!(
+                            "codegen_function: {}\n{}",
+                            c.readable_instance_name(instance),
+                            c.symbol_name(instance)
+                        ),
+                        instance.def_id(),
+                    );
                 }
+                MonoItem::Static(def_id) => {
+                    c.call_with_panic_debug_info(
+                        |ctx| ctx.codegen_static(def_id, item),
+                        format!("codegen_static: {:?}", def_id),
+                        def_id,
+                    );
+                }
+                MonoItem::GlobalAsm(_) => {} // We have already warned above
             }
         }
 

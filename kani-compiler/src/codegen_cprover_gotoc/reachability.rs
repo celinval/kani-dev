@@ -21,22 +21,36 @@
 #![allow(dead_code)]
 use crate::codegen_cprover_gotoc::GotocCtx;
 use rustc_data_structures::fx::FxHashSet;
+use rustc_middle::mir::interpret::{AllocId, ConstValue, GlobalAlloc, Scalar};
 use rustc_middle::mir::mono::CodegenUnit;
 use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::mir::visit::Visitor as MirVisitor;
-use rustc_middle::mir::{Body, CastKind, Constant, Location, Rvalue, Terminator, TerminatorKind};
+use rustc_middle::mir::{
+    Body, CastKind, Constant, ConstantKind, Location, Rvalue, Terminator, TerminatorKind,
+};
+use rustc_middle::span_bug;
 use rustc_middle::ty::adjustment::PointerCast;
+use rustc_middle::ty::layout::{
+    HasParamEnv, HasTyCtxt, LayoutError, LayoutOf, LayoutOfHelpers, TyAndLayout,
+};
 use rustc_middle::ty::{
-    Closure, ClosureKind, Const, Instance, InstanceDef, ParamEnv, Ty, TyCtxt, TyKind, TypeFoldable,
-    VtblEntry,
+    Closure, ClosureKind, Const, ConstKind, Instance, InstanceDef, ParamEnv, Ty, TyCtxt, TyKind,
+    TypeAndMut, TypeFoldable, VtblEntry,
 };
 use rustc_span::def_id::DefId;
+use rustc_span::source_map::Span;
 use rustc_span::DUMMY_SP;
+use rustc_target::abi::{HasDataLayout, TargetDataLayout, VariantIdx};
 use tracing::{debug, trace};
 
 struct MonoItemsCollector<'tcx> {
+    /// The compiler context.
     tcx: TyCtxt<'tcx>,
+    /// Set of collected items used to avoid entering recursion loops.
     collected: FxHashSet<MonoItem<'tcx>>,
+    /// Keep items collected sorted by visiting order which should be more stable.
+    collected_sorted: Vec<MonoItem<'tcx>>,
+    /// Items enqueued for visiting.
     queue: Vec<MonoItem<'tcx>>,
 }
 
@@ -54,6 +68,8 @@ impl<'tcx> MonoItemsCollector<'tcx> {
         while !self.queue.is_empty() {
             let to_visit = self.queue.pop().unwrap();
             if !self.collected.contains(&to_visit) {
+                self.collected.insert(to_visit);
+                self.collected_sorted.push(to_visit);
                 match to_visit {
                     MonoItem::Fn(instance) => {
                         self.visit_fn(instance);
@@ -121,8 +137,9 @@ impl<'a, 'tcx> MonoItemsFnCollector<'a, 'tcx> {
     /// Collect the implementation of all trait methods and its supertrait methods for the given
     /// concrete type.
     fn collect_vtable_methods(&mut self, concrete_ty: Ty<'tcx>, trait_ty: Ty<'tcx>) {
-        assert!(!concrete_ty.is_trait());
-        assert!(trait_ty.is_trait());
+        trace!(?concrete_ty, ?trait_ty, "collect_vtable_methods");
+        assert!(!concrete_ty.is_trait(), "Already a trait: {:?}", concrete_ty);
+        assert!(trait_ty.is_trait(), "Expected a trait: {:?}", trait_ty);
 
         if let TyKind::Dynamic(trait_list, ..) = trait_ty.kind() {
             // A trait object type can have multiple trait bounds but up to one non-auto-trait
@@ -157,26 +174,70 @@ impl<'a, 'tcx> MonoItemsFnCollector<'a, 'tcx> {
 
     /// Collect an instance depending on how it is used (invoked directly or via fn_ptr).
     fn collect_instance(&mut self, instance: Instance<'tcx>, is_direct_call: bool) {
-        if should_codegen_locally(self.tcx, &instance) {
-            let should_collect = match instance.def {
-                InstanceDef::Virtual(..) | InstanceDef::Intrinsic(_) => {
-                    assert!(is_direct_call, "Expected direct call {:?}", instance);
-                    true
+        let should_collect = match instance.def {
+            InstanceDef::Virtual(..) | InstanceDef::Intrinsic(_) => {
+                // Instance definition has no body.
+                assert!(is_direct_call, "Expected direct call {:?}", instance);
+                false
+            }
+            InstanceDef::DropGlue(_, None) => {
+                // Only need the glue if we are not calling it directly.
+                !is_direct_call
+            }
+            InstanceDef::DropGlue(_, Some(_))
+            | InstanceDef::VTableShim(..)
+            | InstanceDef::ReifyShim(..)
+            | InstanceDef::ClosureOnceShim { .. }
+            | InstanceDef::Item(..)
+            | InstanceDef::FnPtrShim(..)
+            | InstanceDef::CloneShim(..) => true,
+        };
+        if should_collect && should_codegen_locally(self.tcx, &instance) {
+            trace!(?instance, "collect_instance");
+            self.collected.insert(MonoItem::Fn(instance.polymorphize(self.tcx)));
+        }
+    }
+
+    /// Collect constant values represented by static variables.
+    fn collect_const_value(&mut self, value: ConstValue<'tcx>) {
+        debug!(?value, "collect_const_value");
+        match value {
+            ConstValue::Scalar(Scalar::Ptr(ptr, _size)) => {
+                self.collect_global_alloc(ptr.provenance);
+            }
+            ConstValue::Slice { data: alloc, start: _, end: _ }
+            | ConstValue::ByRef { alloc, .. } => {
+                for &id in alloc.inner().relocations().values() {
+                    self.collect_global_alloc(id);
                 }
-                InstanceDef::DropGlue(_, None) => {
-                    // Only need the glue if we are not calling it directly.
-                    !is_direct_call
+            }
+            _ => {}
+        }
+    }
+
+    /// Scans the allocation type and collect static objects.
+    /// TODO: Polish this.
+    fn collect_global_alloc(&mut self, alloc_id: AllocId) {
+        match self.tcx.global_alloc(alloc_id) {
+            GlobalAlloc::Static(def_id) => {
+                assert!(!self.tcx.is_thread_local_static(def_id));
+                let instance = Instance::mono(self.tcx, def_id);
+                if should_codegen_locally(self.tcx, &instance) {
+                    trace!(?def_id, "collect_global_alloc");
+                    self.collected.insert(MonoItem::Static(def_id));
                 }
-                InstanceDef::DropGlue(_, Some(_))
-                | InstanceDef::VtableShim(..)
-                | InstanceDef::ReifyShim(..)
-                | InstanceDef::ClosureOnceShim { .. }
-                | InstanceDef::Item(..)
-                | InstanceDef::FnPtrShim(..)
-                | InstanceDef::CloneShim(..) => true,
-            };
-            if should_collect {
-                self.collected.insert(MonoItem::Fn(instance.polymorphize(self.tcx)));
+            }
+            GlobalAlloc::Function(instance) => {
+                if should_codegen_locally(self.tcx, &instance) {
+                    trace!(?alloc_id, ?instance, "collect_global_alloc");
+                    self.collected.insert(MonoItem::Fn(instance.polymorphize(self.tcx)));
+                }
+            }
+            GlobalAlloc::Memory(..) => {
+                // Not sure what to do here. Need to check. Do nothing for now.
+            }
+            GlobalAlloc::VTable(_, _) => {
+                // Not sure what to do here. Need to check. Do nothing for now.
             }
         }
     }
@@ -190,7 +251,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
     /// - Functions / Closures that have their address taken.
     /// - Thread Local.
     fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
-        debug!(rvalue=?*rvalue, "visit_rvalue");
+        //trace!(rvalue=?*rvalue, "visit_rvalue");
 
         match *rvalue {
             Rvalue::Cast(CastKind::Pointer(PointerCast::Unsize), ref operand, target) => {
@@ -251,22 +312,35 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
         self.super_rvalue(rvalue, location);
     }
 
-    /// This does not walk the constant, as it has been handled entirely here and trying
-    /// to walk it would attempt to evaluate the `Const` inside, which doesn't necessarily
-    /// work, as some constants cannot be represented in the type system.
+    /// Collect constants that are represented as static variables.
     fn visit_constant(&mut self, constant: &Constant<'tcx>, location: Location) {
         // TODO: Not sure if we need to do anything here.
-        self.super_constant(constant, location);
+        debug!(?constant, ?location, "visit_constant");
+        let literal = self.monomorphize(constant.literal);
+        let val = match literal {
+            ConstantKind::Val(val, _) => val,
+            ConstantKind::Ty(ct) => match ct.kind() {
+                ConstKind::Value(val) => self.tcx.valtree_to_const_val((ct.ty(), val)),
+                ConstKind::Unevaluated(..) => {
+                    // Do we care about this??
+                    return;
+                }
+                // We don't care about the rest.
+                _ => return,
+            },
+        };
+        self.collect_const_value(val);
     }
 
-    fn visit_const(&mut self, constant: Const<'tcx>, _location: Location) {
+    fn visit_const(&mut self, constant: Const<'tcx>, location: Location) {
+        debug!(?constant, ?location, "visit_const");
         // TODO: Not sure if we need to do anything here.
         self.super_const(constant);
     }
 
     /// Collect function calls.
     fn visit_terminator(&mut self, terminator: &Terminator<'tcx>, location: Location) {
-        debug!("visiting terminator {:?} @ {:?}", terminator, location);
+        debug!(?terminator, ?location, "visit_terminator");
 
         let tcx = self.tcx;
         match terminator.kind {
@@ -343,7 +417,12 @@ pub fn collect_reachable_items<'tcx>(
             MonoItem::Fn(_) | MonoItem::Static(_) | MonoItem::GlobalAsm(_) => None,
         });
     // For each harness, collect items using the same collector.
-    let mut collector = MonoItemsCollector { tcx, collected: FxHashSet::default(), queue: vec![] };
+    let mut collector = MonoItemsCollector {
+        tcx,
+        collected: FxHashSet::default(),
+        queue: vec![],
+        collected_sorted: vec![],
+    };
     items.for_each(|item| collector.collect(item));
     collector.collected
 }
@@ -356,13 +435,14 @@ fn should_codegen_locally<'tcx>(tcx: TyCtxt<'tcx>, instance: &Instance<'tcx>) ->
         // We cannot codegen foreign items.
         false
     } else {
-        assert!(tcx.is_mir_available(def_id), "no MIR available for {:?}", def_id);
-        true
+        // TODO: This should be an assert. Need to compile std with --always-encode-mir.
+        // assert!(tcx.is_mir_available(def_id), "no MIR available for {:?}", def_id);
+        tcx.is_mir_available(def_id)
     }
 }
 
 /// Extract the pair (concrete, trait) for a unsized cast.
-/// This function will return None if it cannot extract a trait (e.g.: unsized type is a slice).
+/// This function will return None if this is not a unsizing coercion from concrete to trait.
 /// This also handles nested cases: `Struct<Struct<dyn T>>` returns `dyn T`
 fn find_trait_conversion<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -370,19 +450,104 @@ fn find_trait_conversion<'tcx>(
     dst_ty: Ty<'tcx>,
 ) -> Option<(Ty<'tcx>, Ty<'tcx>)> {
     let param_env = ParamEnv::reveal_all();
-    let dst_ty_inner = dst_ty.builtin_deref(true).unwrap().ty;
-    if dst_ty_inner.is_sized(tcx.at(DUMMY_SP), param_env) {
+    tracing::warn!(?dst_ty, ?src_ty, "find_trait_conversion");
+    let dst_ty_inner = find_pointer(tcx, dst_ty);
+    let src_ty_inner = find_pointer(tcx, src_ty);
+    tracing::warn!(?dst_ty_inner, ?src_ty_inner, "find_trait_conversion");
+    if dst_ty_inner.is_sized(tcx.at(DUMMY_SP), param_env)
+        || !src_ty_inner.is_sized(tcx.at(DUMMY_SP), param_env)
+    {
         None
     } else {
         let unsized_ty = tcx.struct_tail_erasing_lifetimes(dst_ty_inner, param_env);
         match unsized_ty.kind() {
             TyKind::Foreign(..) | TyKind::Str | TyKind::Slice(..) => None,
             TyKind::Dynamic(..) => {
-                let src_ty_inner = src_ty.builtin_deref(true).unwrap().ty;
                 let concrete_ty = tcx.struct_tail_erasing_lifetimes(src_ty_inner, param_env);
                 Some((concrete_ty, unsized_ty))
             }
             _ => unreachable!("unexpected unsized tail: {:?}", unsized_ty),
         }
+    }
+}
+
+/// This function extracts the pointee type of a regular pointer and std smart pointers.
+///
+/// E.g.: For `Rc<dyn T>` where the Rc definition is:
+/// ```
+/// pub struct Rc<T: ?Sized> {
+///    ptr: NonNull<RcBox<T>>,
+///    phantom: PhantomData<RcBox<T>>,
+/// }
+///
+/// pub struct NonNull<T: ?Sized> {
+///    pointer: *const T,
+/// }
+/// ```
+///
+/// This function will return `pointer: *const T`.
+fn find_pointer<'tcx>(tcx: TyCtxt<'tcx>, typ: Ty<'tcx>) -> Ty<'tcx> {
+    struct ReceiverIter<'tcx> {
+        pub curr: Ty<'tcx>,
+        pub tcx: TyCtxt<'tcx>,
+    }
+
+    impl<'tcx> LayoutOfHelpers<'tcx> for ReceiverIter<'tcx> {
+        type LayoutOfResult = TyAndLayout<'tcx>;
+
+        #[inline]
+        fn handle_layout_err(&self, err: LayoutError, span: Span, ty: Ty<'tcx>) -> ! {
+            span_bug!(span, "failed to get layout for `{}`: {}", ty, err)
+        }
+    }
+
+    impl<'tcx> HasParamEnv<'tcx> for ReceiverIter<'tcx> {
+        fn param_env(&self) -> ParamEnv<'tcx> {
+            ParamEnv::reveal_all()
+        }
+    }
+
+    impl<'tcx> HasTyCtxt<'tcx> for ReceiverIter<'tcx> {
+        fn tcx(&self) -> TyCtxt<'tcx> {
+            self.tcx
+        }
+    }
+
+    impl<'tcx> HasDataLayout for ReceiverIter<'tcx> {
+        fn data_layout(&self) -> &TargetDataLayout {
+            self.tcx.data_layout()
+        }
+    }
+
+    impl<'tcx> Iterator for ReceiverIter<'tcx> {
+        type Item = (String, Ty<'tcx>);
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if let TyKind::Adt(adt_def, adt_substs) = self.curr.kind() {
+                assert_eq!(
+                    adt_def.variants().len(),
+                    1,
+                    "Expected a single-variant ADT. Found {:?}",
+                    self.curr
+                );
+                let tcx = self.tcx;
+                let fields = &adt_def.variants().get(VariantIdx::from_u32(0)).unwrap().fields;
+                let mut non_zsts = fields
+                    .iter()
+                    .filter(|field| !self.layout_of(field.ty(tcx, adt_substs)).is_zst())
+                    .map(|non_zst| (non_zst.name.to_string(), non_zst.ty(tcx, adt_substs)));
+                let (name, next) = non_zsts.next().expect("Expected one non-zst field.");
+                assert!(non_zsts.next().is_none(), "Expected only one non-zst field.");
+                self.curr = next;
+                Some((name, self.curr))
+            } else {
+                None
+            }
+        }
+    }
+    if let Some(TypeAndMut { ty, .. }) = typ.builtin_deref(true) {
+        ty
+    } else {
+        ReceiverIter { tcx, curr: typ }.last().unwrap().1
     }
 }
