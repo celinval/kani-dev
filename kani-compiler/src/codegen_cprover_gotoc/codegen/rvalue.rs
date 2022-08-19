@@ -935,6 +935,7 @@ impl<'tcx> GotocCtx<'tcx> {
             Type::struct_tag(vtable_name),
             Location::none(),
             |ctx, var| {
+                debug!(?src_mir_type, ?dst_mir_type, "codegen_vtable");
                 // Build the vtable, using Rust's vtable_entries to determine field order
                 let vtable_entries = if let Some(principal) = binders.principal() {
                     let trait_ref_binder = principal.with_self_ty(ctx.tcx, src_mir_type);

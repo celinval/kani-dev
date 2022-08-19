@@ -64,7 +64,7 @@ echo "Starting cargo build with Kani"
 export RUST_BACKTRACE=1
 export RUSTC_LOG=error
 export KANIFLAGS="--goto-c --ignore-global-asm"
-export RUSTFLAGS="--kani-flags"
+export RUSTFLAGS="--kani-flags -Zalways-encode-mir "
 export RUSTC="$KANI_DIR/target/debug/kani-compiler"
 # Compile rust to iRep
 $WRAPPER cargo build --verbose -Z build-std --lib --target $TARGET
