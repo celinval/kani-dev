@@ -16,7 +16,7 @@
 //! the reachability analysis.
 //!
 //! TODO: Allow a few extension points such as:
-//!   - Search boundary via closure (e.g.: should_codegen_locally)
+//!   - Search boundary via closure (e.g.: should_codegen_locally vs hooks)
 //!   - Partition? Parallelism?
 #![allow(dead_code)]
 use crate::codegen_cprover_gotoc::GotocCtx;
@@ -39,7 +39,6 @@ use rustc_middle::ty::{
 };
 use rustc_span::def_id::DefId;
 use rustc_span::source_map::Span;
-use rustc_span::DUMMY_SP;
 use rustc_target::abi::{HasDataLayout, TargetDataLayout, VariantIdx};
 use tracing::{debug, debug_span, trace, warn};
 
@@ -145,7 +144,6 @@ impl<'a, 'tcx> MonoItemsFnCollector<'a, 'tcx> {
         trace!(?concrete_ty, ?trait_ty, "collect_vtable_methods");
         assert!(!concrete_ty.is_trait(), "Already a trait: {:?}", concrete_ty);
         assert!(trait_ty.is_trait(), "Expected a trait: {:?}", trait_ty);
-
         if let TyKind::Dynamic(trait_list, ..) = trait_ty.kind() {
             // A trait object type can have multiple trait bounds but up to one non-auto-trait
             // bound. This non-auto-trait, named principal, is the only one that can have methods.
@@ -168,6 +166,7 @@ impl<'a, 'tcx> MonoItemsFnCollector<'a, 'tcx> {
                     }
                     VtblEntry::Method(..) => None,
                 });
+                trace!(methods=?methods.clone().collect::<Vec<_>>(), "collect_vtable_methods");
                 self.collected.extend(methods);
             }
         }
@@ -402,6 +401,9 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
 ///
 impl<'tcx> MirVisitor<'tcx> for MonoItemsCollector<'tcx> {}
 
+/// This is the reachability starting point. We start from every static item and proof harnesses.
+/// TODO: Add option to "assess" crate by adding all public items in the crate.
+/// TODO: Do we really need all static elements?
 pub fn collect_reachable_items<'tcx>(
     tcx: TyCtxt<'tcx>,
     ctx: &GotocCtx,
@@ -413,7 +415,8 @@ pub fn collect_reachable_items<'tcx>(
         .flat_map(|cgu| cgu.items_in_deterministic_order(tcx))
         .filter_map(|(item, _)| match item {
             MonoItem::Fn(instance) if ctx.is_proof_harness(&instance) => Some(item),
-            MonoItem::Fn(_) | MonoItem::Static(_) | MonoItem::GlobalAsm(_) => None,
+            MonoItem::Static(_) => Some(item),
+            MonoItem::Fn(_) | MonoItem::GlobalAsm(_) => None,
         });
     // For each harness, collect items using the same collector.
     let mut collector = MonoItemsCollector {
@@ -429,48 +432,63 @@ pub fn collect_reachable_items<'tcx>(
 /// Return whether we should include the item into codegen.
 /// We don't include foreign items only.
 fn should_codegen_locally<'tcx>(tcx: TyCtxt<'tcx>, instance: &Instance<'tcx>) -> bool {
-    let def_id = instance.def_id();
-    if tcx.is_foreign_item(def_id) {
-        // We cannot codegen foreign items.
-        false
+    if let Some(def_id) = instance.def.def_id_if_not_guaranteed_local_codegen() {
+        if tcx.is_foreign_item(def_id) {
+            // We cannot codegen foreign items.
+            false
+        } else {
+            // TODO: This should be an assert. Need to compile std with --always-encode-mir.
+            // assert!(tcx.is_mir_available(def_id), "no MIR available for {:?}", def_id);
+            (!tcx.is_mir_available(def_id)).then(|| warn!(?def_id, "Missing MIR"));
+            tcx.is_mir_available(def_id)
+        }
     } else {
-        // TODO: This should be an assert. Need to compile std with --always-encode-mir.
-        // assert!(tcx.is_mir_available(def_id), "no MIR available for {:?}", def_id);
-        tcx.is_mir_available(def_id)
+        // This will include things like VTableShim and other stuff. See the method
+        // def_id_if_not_guaranteed_local_codegen for the full list.
+        true
     }
 }
 
 /// Extract the pair (concrete, trait) for a unsized cast.
 /// This function will return None if this is not a unsizing coercion from concrete to trait.
-/// This also handles nested cases: `Struct<Struct<dyn T>>` returns `dyn T`
+///
+/// For example, if `&u8` is being converted to `&dyn Debug`, this method would return:
+/// `Some(u8, dyn Debug)`.
+///
+/// This method also handles nested cases and `std` smart pointers. E.g.:
+///
+/// Conversion between `Rc<Wrapper<T>>` into `Rc<Wrapper<dyn Debug>>` should return:
+/// `Some(T, dyn Debug)`
+///
+/// The first step of this method is to extract the pointee types. Then we need to traverse the
+/// pointee types to find the actual trait and the type implementing it.
+///
+/// TODO: Do we need to handle &Wrapper<dyn T1> to &dyn T2 or is that taken care of with super
+/// trait handling? What about CoerceUnsized trait?
 fn find_trait_conversion<'tcx>(
     tcx: TyCtxt<'tcx>,
     src_ty: Ty<'tcx>,
     dst_ty: Ty<'tcx>,
 ) -> Option<(Ty<'tcx>, Ty<'tcx>)> {
-    let param_env = ParamEnv::reveal_all();
+    let vtable_metadata = |mir_type: Ty<'tcx>| {
+        let (metadata, _) = mir_type.ptr_metadata_ty(tcx, |ty| ty);
+        metadata != tcx.types.unit && metadata != tcx.types.usize
+    };
+
     trace!(?dst_ty, ?src_ty, "find_trait_conversion");
     let dst_ty_inner = find_pointer(tcx, dst_ty);
     let src_ty_inner = find_pointer(tcx, src_ty);
+
     trace!(?dst_ty_inner, ?src_ty_inner, "find_trait_conversion");
-    if dst_ty_inner.is_sized(tcx.at(DUMMY_SP), param_env)
-        || !src_ty_inner.is_sized(tcx.at(DUMMY_SP), param_env)
-    {
-        None
-    } else {
-        let unsized_ty = tcx.struct_tail_erasing_lifetimes(dst_ty_inner, param_env);
-        match unsized_ty.kind() {
-            TyKind::Foreign(..) | TyKind::Str | TyKind::Slice(..) => None,
-            TyKind::Dynamic(..) => {
-                let concrete_ty = tcx.struct_tail_erasing_lifetimes(src_ty_inner, param_env);
-                Some((concrete_ty, unsized_ty))
-            }
-            _ => unreachable!("unexpected unsized tail: {:?}", unsized_ty),
-        }
-    }
+    (vtable_metadata(dst_ty_inner) && !vtable_metadata(src_ty_inner)).then(|| {
+        let param_env = ParamEnv::reveal_all();
+        tcx.struct_lockstep_tails_erasing_lifetimes(src_ty_inner, dst_ty_inner, param_env)
+    })
 }
 
 /// This function extracts the pointee type of a regular pointer and std smart pointers.
+///
+/// TODO: Refactor this to use `CustomCoerceUnsized` logic which includes custom smart pointers.
 ///
 /// E.g.: For `Rc<dyn T>` where the Rc definition is:
 /// ```
@@ -552,30 +570,34 @@ fn find_pointer<'tcx>(tcx: TyCtxt<'tcx>, typ: Ty<'tcx>) -> Ty<'tcx> {
 }
 
 /// Scans the allocation type and collect static objects.
-/// TODO: Polish this.
-fn global_alloc<'tcx>(tcx: TyCtxt<'tcx>, alloc_id: AllocId) -> Option<MonoItem> {
+/// TODO: Polish this. Do we need VTable and Memory?
+fn global_alloc<'tcx>(tcx: TyCtxt<'tcx>, alloc_id: AllocId) -> Vec<MonoItem> {
+    let mut items = vec![];
     match tcx.global_alloc(alloc_id) {
         GlobalAlloc::Static(def_id) => {
             assert!(!tcx.is_thread_local_static(def_id));
             let instance = Instance::mono(tcx, def_id);
             should_codegen_locally(tcx, &instance).then(|| {
                 trace!(?def_id, "global_alloc");
-                MonoItem::Static(def_id)
-            })
+                items.push(MonoItem::Static(def_id))
+            });
         }
-        GlobalAlloc::Function(instance) => should_codegen_locally(tcx, &instance).then(|| {
-            trace!(?alloc_id, ?instance, "global_alloc");
-            MonoItem::Fn(instance.polymorphize(tcx))
-        }),
-        GlobalAlloc::Memory(..) => {
+        GlobalAlloc::Function(instance) => {
+            should_codegen_locally(tcx, &instance).then(|| {
+                trace!(?alloc_id, ?instance, "global_alloc");
+                items.push(MonoItem::Fn(instance.polymorphize(tcx)))
+            });
+        }
+        GlobalAlloc::Memory(alloc) => {
             trace!(?alloc_id, "global_alloc memory");
-            // Not sure what to do here. Need to check. Do nothing for now.
-            None
+            items
+                .extend(alloc.inner().relocations().values().flat_map(|id| global_alloc(tcx, *id)));
         }
-        GlobalAlloc::VTable(_, _) => {
+        GlobalAlloc::VTable(ty, trait_ref) => {
             trace!(?alloc_id, "global_alloc vtable");
-            // Not sure what to do here. Need to check. Do nothing for now.
-            None
+            let vtable_id = tcx.vtable_allocation((ty, trait_ref));
+            items.append(&mut global_alloc(tcx, vtable_id));
         }
-    }
+    };
+    items
 }
