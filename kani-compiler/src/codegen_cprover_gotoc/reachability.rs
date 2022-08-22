@@ -21,7 +21,7 @@
 #![allow(dead_code)]
 use crate::codegen_cprover_gotoc::GotocCtx;
 use rustc_data_structures::fx::FxHashSet;
-use rustc_middle::mir::interpret::{AllocId, ConstValue, GlobalAlloc, Scalar};
+use rustc_middle::mir::interpret::{AllocId, ConstValue, ErrorHandled, GlobalAlloc, Scalar};
 use rustc_middle::mir::mono::CodegenUnit;
 use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::mir::visit::Visitor as MirVisitor;
@@ -41,7 +41,7 @@ use rustc_span::def_id::DefId;
 use rustc_span::source_map::Span;
 use rustc_span::DUMMY_SP;
 use rustc_target::abi::{HasDataLayout, TargetDataLayout, VariantIdx};
-use tracing::{debug, trace};
+use tracing::{debug, debug_span, trace, warn};
 
 struct MonoItemsCollector<'tcx> {
     /// The compiler context.
@@ -87,7 +87,7 @@ impl<'tcx> MonoItemsCollector<'tcx> {
 
     /// Visit a function and collect all mono-items reachable from its instructions.
     fn visit_fn(&mut self, instance: Instance<'tcx>) {
-        debug!(?instance, "visit_fn");
+        let _guard = debug_span!("visit_fn", function=?instance).entered();
         let body = self.tcx.instance_mir(instance.def);
         let mut collector =
             MonoItemsFnCollector { tcx: self.tcx, collected: FxHashSet::default(), instance, body };
@@ -105,7 +105,12 @@ impl<'tcx> MonoItemsCollector<'tcx> {
         let instance = Instance::resolve_drop_in_place(self.tcx, static_ty);
         self.queue.push(MonoItem::Fn(instance.polymorphize(self.tcx)));
 
-        // TODO: Collect initialization.
+        // Collect initialization.
+        if let Ok(alloc) = self.tcx.eval_static_initializer(def_id) {
+            for &id in alloc.inner().relocations().values() {
+                self.queue.extend(global_alloc(self.tcx, id).iter());
+            }
+        }
     }
 
     /// Visit global assembly and emit either a warning or an error.
@@ -203,42 +208,15 @@ impl<'a, 'tcx> MonoItemsFnCollector<'a, 'tcx> {
         debug!(?value, "collect_const_value");
         match value {
             ConstValue::Scalar(Scalar::Ptr(ptr, _size)) => {
-                self.collect_global_alloc(ptr.provenance);
+                self.collected.extend(global_alloc(self.tcx, ptr.provenance).iter());
             }
             ConstValue::Slice { data: alloc, start: _, end: _ }
             | ConstValue::ByRef { alloc, .. } => {
                 for &id in alloc.inner().relocations().values() {
-                    self.collect_global_alloc(id);
+                    self.collected.extend(global_alloc(self.tcx, id).iter())
                 }
             }
             _ => {}
-        }
-    }
-
-    /// Scans the allocation type and collect static objects.
-    /// TODO: Polish this.
-    fn collect_global_alloc(&mut self, alloc_id: AllocId) {
-        match self.tcx.global_alloc(alloc_id) {
-            GlobalAlloc::Static(def_id) => {
-                assert!(!self.tcx.is_thread_local_static(def_id));
-                let instance = Instance::mono(self.tcx, def_id);
-                if should_codegen_locally(self.tcx, &instance) {
-                    trace!(?def_id, "collect_global_alloc");
-                    self.collected.insert(MonoItem::Static(def_id));
-                }
-            }
-            GlobalAlloc::Function(instance) => {
-                if should_codegen_locally(self.tcx, &instance) {
-                    trace!(?alloc_id, ?instance, "collect_global_alloc");
-                    self.collected.insert(MonoItem::Fn(instance.polymorphize(self.tcx)));
-                }
-            }
-            GlobalAlloc::Memory(..) => {
-                // Not sure what to do here. Need to check. Do nothing for now.
-            }
-            GlobalAlloc::VTable(_, _) => {
-                // Not sure what to do here. Need to check. Do nothing for now.
-            }
         }
     }
 }
@@ -300,6 +278,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
             }
             Rvalue::ThreadLocalRef(def_id) => {
                 assert!(self.tcx.is_thread_local_static(def_id));
+                trace!(?def_id, "visit_rvalue thread_local");
                 let instance = Instance::mono(self.tcx, def_id);
                 if should_codegen_locally(self.tcx, &instance) {
                     trace!("collecting thread-local static {:?}", def_id);
@@ -314,19 +293,35 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
 
     /// Collect constants that are represented as static variables.
     fn visit_constant(&mut self, constant: &Constant<'tcx>, location: Location) {
-        // TODO: Not sure if we need to do anything here.
-        debug!(?constant, ?location, "visit_constant");
         let literal = self.monomorphize(constant.literal);
+        debug!(?constant, ?location, ?literal, "visit_constant");
         let val = match literal {
-            ConstantKind::Val(val, _) => val,
+            ConstantKind::Val(const_val, _) => const_val,
             ConstantKind::Ty(ct) => match ct.kind() {
-                ConstKind::Value(val) => self.tcx.valtree_to_const_val((ct.ty(), val)),
-                ConstKind::Unevaluated(..) => {
-                    // Do we care about this??
-                    return;
+                ConstKind::Value(v) => self.tcx.valtree_to_const_val((ct.ty(), v)),
+                ConstKind::Unevaluated(un_eval) => {
+                    // Thread local fall into this category.
+                    match self.tcx.const_eval_resolve(ParamEnv::reveal_all(), un_eval, None) {
+                        // The `monomorphize` call should have evaluated that constant already.
+                        Ok(const_val) => const_val,
+                        Err(ErrorHandled::TooGeneric) => span_bug!(
+                            self.body.source_info(location).span,
+                            "Unexpected polymorphic constant: {:?}",
+                            literal
+                        ),
+                        Err(error) => {
+                            warn!(?error, "Error already reported");
+                            return;
+                        }
+                    }
                 }
-                // We don't care about the rest.
-                _ => return,
+                // Nothing to do
+                ConstKind::Param(..) | ConstKind::Infer(..) | ConstKind::Error(..) => return,
+
+                // Shouldn't happen
+                ConstKind::Placeholder(..) | ConstKind::Bound(..) => {
+                    unreachable!("Unexpected constant type {:?} ({:?})", ct, ct.kind())
+                }
             },
         };
         self.collect_const_value(val);
@@ -354,7 +349,11 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
                             .unwrap();
                     self.collect_instance(instance, true);
                 } else {
-                    unreachable!();
+                    assert!(
+                        matches!(fn_ty.kind(), TyKind::FnPtr(..)),
+                        "Unexpected type: {:?}",
+                        fn_ty
+                    );
                 }
             }
             TerminatorKind::Drop { ref place, .. }
@@ -450,10 +449,10 @@ fn find_trait_conversion<'tcx>(
     dst_ty: Ty<'tcx>,
 ) -> Option<(Ty<'tcx>, Ty<'tcx>)> {
     let param_env = ParamEnv::reveal_all();
-    tracing::warn!(?dst_ty, ?src_ty, "find_trait_conversion");
+    trace!(?dst_ty, ?src_ty, "find_trait_conversion");
     let dst_ty_inner = find_pointer(tcx, dst_ty);
     let src_ty_inner = find_pointer(tcx, src_ty);
-    tracing::warn!(?dst_ty_inner, ?src_ty_inner, "find_trait_conversion");
+    trace!(?dst_ty_inner, ?src_ty_inner, "find_trait_conversion");
     if dst_ty_inner.is_sized(tcx.at(DUMMY_SP), param_env)
         || !src_ty_inner.is_sized(tcx.at(DUMMY_SP), param_env)
     {
@@ -549,5 +548,34 @@ fn find_pointer<'tcx>(tcx: TyCtxt<'tcx>, typ: Ty<'tcx>) -> Ty<'tcx> {
         ty
     } else {
         ReceiverIter { tcx, curr: typ }.last().unwrap().1
+    }
+}
+
+/// Scans the allocation type and collect static objects.
+/// TODO: Polish this.
+fn global_alloc<'tcx>(tcx: TyCtxt<'tcx>, alloc_id: AllocId) -> Option<MonoItem> {
+    match tcx.global_alloc(alloc_id) {
+        GlobalAlloc::Static(def_id) => {
+            assert!(!tcx.is_thread_local_static(def_id));
+            let instance = Instance::mono(tcx, def_id);
+            should_codegen_locally(tcx, &instance).then(|| {
+                trace!(?def_id, "global_alloc");
+                MonoItem::Static(def_id)
+            })
+        }
+        GlobalAlloc::Function(instance) => should_codegen_locally(tcx, &instance).then(|| {
+            trace!(?alloc_id, ?instance, "global_alloc");
+            MonoItem::Fn(instance.polymorphize(tcx))
+        }),
+        GlobalAlloc::Memory(..) => {
+            trace!(?alloc_id, "global_alloc memory");
+            // Not sure what to do here. Need to check. Do nothing for now.
+            None
+        }
+        GlobalAlloc::VTable(_, _) => {
+            trace!(?alloc_id, "global_alloc vtable");
+            // Not sure what to do here. Need to check. Do nothing for now.
+            None
+        }
     }
 }

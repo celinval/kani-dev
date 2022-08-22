@@ -72,9 +72,17 @@ impl CodegenBackend for GotocCodegenBackend {
         for cgu in codegen_units {
             debug!(?cgu, "codegen_crate");
             let items = cgu.items_in_deterministic_order(tcx);
-            let missing =
-                items.iter().filter(|(item, _)| !reach_items.contains(item)).collect::<Vec<_>>();
-            debug!(?missing, "missing items");
+            let missing = items
+                .iter()
+                .filter_map(|(item, _)| {
+                    (!reach_items.contains(item)).then(|| item.symbol_name(tcx))
+                })
+                .collect::<Vec<_>>();
+            if missing.is_empty() {
+                debug!("No missing items");
+            } else {
+                warn!(?missing, "missing items");
+            }
         }
 
         for item in &reach_items {
