@@ -50,6 +50,17 @@ impl KaniSession {
             args.push("--no-run".into());
         } else {
             args.push("build".into());
+
+            args.push("-Z".into());
+            args.push("host-config".into());
+            args.push("-Z".into());
+            args.push("target-applies-to-host".into());
+            args.push("-Z".into());
+            args.push("build-std=alloc,core,std,proc_macro,panic_abort".into());
+            args.push("--target".into());
+            args.push("x86_64-unknown-linux-gnu".into());
+            //args.push("-Z".into());
+            //args.push("build-std-features=[\"panic_abort\"]".into());
         }
 
         if self.args.all_features {
@@ -66,7 +77,7 @@ impl KaniSession {
         args.push("--target-dir".into());
         args.push(target_dir.into());
 
-        if self.args.verbose || self.args.debug {
+        if self.args.verbose {
             args.push("-v".into());
         }
 
@@ -88,9 +99,14 @@ impl KaniSession {
             });
         }
 
+        let symtabs = glob(&outdir.join("*.symtab.json"))?
+            .iter()
+            .filter_map(|pb| (!pb.to_string_lossy().contains("panic_unwind")).then(|| pb.clone()))
+            .collect();
+
         Ok(CargoOutputs {
             outdir: outdir.clone(),
-            symtabs: glob(&outdir.join("*.symtab.json"))?,
+            symtabs,
             metadata: glob(&outdir.join("*.kani-metadata.json"))?,
             restrictions: self.args.restrict_vtable().then_some(outdir),
         })

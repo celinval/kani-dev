@@ -410,14 +410,19 @@ pub fn collect_reachable_items<'tcx>(
     codegen_units: &'tcx [CodegenUnit<'tcx>],
 ) -> FxHashSet<MonoItem<'tcx>> {
     // Filter proof harnesses.
+    let mut has_harness = false;
     let items = codegen_units
         .iter()
         .flat_map(|cgu| cgu.items_in_deterministic_order(tcx))
         .filter_map(|(item, _)| match item {
-            MonoItem::Fn(instance) if ctx.is_proof_harness(&instance) => Some(item),
+            MonoItem::Fn(instance) if ctx.is_proof_harness(&instance) => {
+                has_harness = true;
+                Some(item)
+            }
             MonoItem::Static(_) => Some(item),
             MonoItem::Fn(_) | MonoItem::GlobalAsm(_) => None,
-        });
+        })
+        .collect::<Vec<_>>();
     // For each harness, collect items using the same collector.
     let mut collector = MonoItemsCollector {
         tcx,
@@ -425,7 +430,13 @@ pub fn collect_reachable_items<'tcx>(
         queue: vec![],
         collected_sorted: vec![],
     };
-    items.for_each(|item| collector.collect(item));
+
+    // This shall be replaced by --reachability=none
+    // TODO: Should we include all static no matter what? Initialization should be constant so no
+    // side effect should be possible.
+    if has_harness {
+        items.iter().for_each(|item| collector.collect(*item));
+    }
     collector.collected
 }
 

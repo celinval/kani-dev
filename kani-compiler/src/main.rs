@@ -40,13 +40,11 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 /// This function generates all rustc configurations required by our goto-c codegen.
-fn rustc_gotoc_flags(lib_path: &str) -> Vec<String> {
+fn rustc_gotoc_flags(_lib_path: &str) -> Vec<String> {
     // The option below provides a mechanism by which definitions in the
     // standard library can be overriden. See
     // https://rust-lang.zulipchat.com/#narrow/stream/182449-t-compiler.2Fhelp/topic/.E2.9C.94.20Globally.20override.20an.20std.20macro/near/268873354
     // for more details.
-    let kani_std_rlib = PathBuf::from(lib_path).join("libkani_std.rlib");
-    let kani_std_wrapper = format!("noprelude:std={}", kani_std_rlib.to_str().unwrap());
     let args = vec![
         "-C",
         "overflow-checks=on",
@@ -67,12 +65,6 @@ fn rustc_gotoc_flags(lib_path: &str) -> Vec<String> {
         "crate-attr=register_tool(kanitool)",
         "-Z",
         "always-encode-mir",
-        "-L",
-        lib_path,
-        "--extern",
-        "kani",
-        "--extern",
-        kani_std_wrapper.as_str(),
     ];
     args.iter().map(|s| s.to_string()).collect()
 }

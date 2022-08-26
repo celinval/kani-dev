@@ -11,6 +11,8 @@ then
   exit 0
 fi
 
+cd "$( dirname "${BASH_SOURCE[0]}" )"
+
 rm -rf /tmp/check_format
 cp -r -L check_format /tmp/
 cp -r -L ../../library /tmp/
