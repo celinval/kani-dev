@@ -8,6 +8,7 @@ use std::cell::RefCell;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::time::Instant;
 
 /// Contains information about the execution environment and arguments that affect operations
 pub struct KaniSession {
@@ -86,6 +87,7 @@ impl KaniSession {
             cmd.stdout(std::process::Stdio::null());
             cmd.stderr(std::process::Stdio::null());
         }
+        let now = Instant::now();
         if self.args.verbose || self.args.dry_run {
             println!("{}", render_command(&cmd).to_string_lossy());
             if self.args.dry_run {
@@ -96,6 +98,12 @@ impl KaniSession {
         let result = cmd
             .status()
             .context(format!("Failed to invoke {}", cmd.get_program().to_string_lossy()))?;
+
+        if !self.args.quiet {
+            let elapsed = now.elapsed().as_secs_f32();
+            println!("{} Time: {}s", cmd.get_program().to_string_lossy(), elapsed);
+        }
+
         if !result.success() {
             bail!("{} exited with status {}", cmd.get_program().to_string_lossy(), result);
         }
@@ -107,9 +115,15 @@ impl KaniSession {
         if self.args.quiet || self.args.debug || self.args.verbose || self.args.dry_run {
             return self.run_terminal(cmd);
         }
+        let now = Instant::now();
         let result = cmd
             .output()
             .context(format!("Failed to invoke {}", cmd.get_program().to_string_lossy()))?;
+
+        if !self.args.quiet {
+            let elapsed = now.elapsed().as_secs_f32();
+            println!("{} Time: {}s", cmd.get_program().to_string_lossy(), elapsed);
+        }
         if !result.status.success() {
             // Don't suppress the output. There doesn't seem to be a way to easily get Command
             // to give one output stream of both out/err with interleaving correct, it seems
@@ -132,10 +146,19 @@ impl KaniSession {
                 return Ok(<ExitStatus as std::os::unix::prelude::ExitStatusExt>::from_raw(0));
             }
         }
+        let now = Instant::now();
         let output_file = std::fs::File::create(&stdout)?;
         cmd.stdout(output_file);
 
-        cmd.status().context(format!("Failed to invoke {}", cmd.get_program().to_string_lossy()))
+        let result = cmd
+            .status()
+            .context(format!("Failed to invoke {}", cmd.get_program().to_string_lossy()));
+
+        if !self.args.quiet {
+            let elapsed = now.elapsed().as_secs_f32();
+            println!("{} Time: {}s", cmd.get_program().to_string_lossy(), elapsed);
+        }
+        result
     }
 
     /// Run a job and pipe its output to this process.

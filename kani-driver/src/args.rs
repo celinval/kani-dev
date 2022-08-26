@@ -129,7 +129,7 @@ pub struct KaniArgs {
     #[structopt(long)]
     pub default_unwind: Option<u32>,
     /// Specify the value used for loop unwinding for the specified harness in CBMC
-    #[structopt(long, requires("harness"))]
+    #[structopt(long)]
     pub unwind: Option<u32>,
     /// Pass through directly to CBMC; must be the last flag.
     /// This feature is unstable and it requires `--enable-unstable` to be used

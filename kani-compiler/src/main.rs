@@ -45,8 +45,6 @@ fn rustc_gotoc_flags(lib_path: &str) -> Vec<String> {
     // standard library can be overriden. See
     // https://rust-lang.zulipchat.com/#narrow/stream/182449-t-compiler.2Fhelp/topic/.E2.9C.94.20Globally.20override.20an.20std.20macro/near/268873354
     // for more details.
-    let kani_std_rlib = PathBuf::from(lib_path).join("libstd.rlib");
-    let kani_std_wrapper = format!("noprelude:std={}", kani_std_rlib.to_str().unwrap());
     let args = vec![
         "-C",
         "overflow-checks=on",
@@ -67,10 +65,6 @@ fn rustc_gotoc_flags(lib_path: &str) -> Vec<String> {
         "crate-attr=register_tool(kanitool)",
         "-L",
         lib_path,
-        "--extern",
-        "kani",
-        "--extern",
-        kani_std_wrapper.as_str(),
     ];
     args.iter().map(|s| s.to_string()).collect()
 }
