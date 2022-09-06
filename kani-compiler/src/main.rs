@@ -73,6 +73,8 @@ fn rustc_gotoc_flags(lib_path: &str) -> Vec<String> {
         "kani",
         "--extern",
         kani_std_wrapper.as_str(),
+        "--sysroot",
+        lib_path,
     ];
     args.iter().map(|s| s.to_string()).collect()
 }
@@ -138,9 +140,6 @@ fn generate_rustc_args(args: &ArgMatches) -> Vec<String> {
     if let Some(extra_flags) = args.values_of_os(parser::RUSTC_OPTIONS) {
         extra_flags.for_each(|arg| rustc_args.push(convert_arg(arg)));
     }
-    let sysroot = sysroot_path(args.value_of(parser::SYSROOT));
-    rustc_args.push(String::from("--sysroot"));
-    rustc_args.push(convert_arg(sysroot.as_os_str()));
     tracing::debug!(?rustc_args, "Compile");
     rustc_args
 }
@@ -167,6 +166,7 @@ fn convert_arg(arg: &OsStr) -> String {
 /// but this failed to have effect when building a `build.rs` file.
 /// This wasn't used anywhere but passing down here, so we've just migrated
 /// the code to find the sysroot path directly into this function.
+#[cfg(custom_sysroot)]
 fn sysroot_path(sysroot_arg: Option<&str>) -> PathBuf {
     // rustup sets some environment variables during build, but this is not clearly documented.
     // https://github.com/rust-lang/rustup/blob/master/src/toolchain.rs (search for RUSTUP_HOME)
