@@ -61,6 +61,7 @@ impl Subscriber for DummySubscriber {
 }
 
 #[kani::proof]
+#[kani::unwind(1)]
 fn main() {
     let s: Arc<Mutex<dyn Subscriber>> = Arc::new(Mutex::new(DummySubscriber::new()));
     let mut data = s.lock().unwrap();

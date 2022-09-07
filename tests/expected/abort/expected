@@ -4,11 +4,11 @@ in function main
 
 Status: FAILURE\
 Description: "Function abort() was invoked"\
-in function kani_std::process::abort
+in function std::process::abort
 
 Status: SUCCESS\
 Description: "Function exit() was invoked"\
-in function kani_std::process::exit
+in function std::process::exit
 
 Failed Checks: Function abort() was invoked
 

@@ -25,6 +25,8 @@ check-cbmc-viewer-version.py --major 3 --minor 5
 # Formatting check
 ${SCRIPT_DIR}/kani-fmt.sh --check
 
+# Build sysroot
+${SCRIPT_DIR}/build-sysroot.sh
 # Build all packages in the workspace
 cargo build --workspace
 

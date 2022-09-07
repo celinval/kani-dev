@@ -18,6 +18,8 @@
 //! TODO: Allow a few extension points such as:
 //!   - Search boundary via closure (e.g.: should_codegen_locally vs hooks)
 //!   - Partition? Parallelism?
+//!   - Drop issue: This test is broken due to the reachability analysis:
+//!      - unsupported_drop_unsized.rs
 #![allow(dead_code)]
 use crate::codegen_cprover_gotoc::GotocCtx;
 use rustc_data_structures::fx::FxHashSet;

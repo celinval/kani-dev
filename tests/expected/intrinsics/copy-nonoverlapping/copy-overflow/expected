@@ -1,2 +1,3 @@
 FAILURE\
-copy_nonoverlapping: attempt to compute number in bytes which would overflow
+reached intrinsic::abort\
+in function std::intrinsics::copy_nonoverlapping

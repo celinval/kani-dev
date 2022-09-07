@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0 OR MIT
 
 [package]
-name = "kani-std"
+# Note: this package is intentionally named std to make sure the names of
+# standard library symbols are preserved
+name = "std"
 version = "0.8.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
