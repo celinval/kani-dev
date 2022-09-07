@@ -56,21 +56,7 @@ impl<'tcx> GotocCtx<'tcx> {
                         .assign(self.codegen_rvalue(r, location), location)
                 }
             }
-            StatementKind::Deinit(place) => {
-                // From rustc doc: "This writes `uninit` bytes to the entire place."
-                // Thus, we assign nondet() value to the entire place.
-                let dst_mir_ty = self.place_ty(place);
-                let dst_type = self.codegen_ty(dst_mir_ty);
-                let layout = self.layout_of(dst_mir_ty);
-                if layout.is_zst() || dst_type.sizeof_in_bits(&self.symbol_table) == 0 {
-                    // We ignore assignment for all zero size types
-                    Stmt::skip(location)
-                } else {
-                    unwrap_or_return_codegen_unimplemented_stmt!(self, self.codegen_place(place))
-                        .goto_expr
-                        .assign(dst_type.nondet(), location)
-                }
-            }
+            StatementKind::Deinit(place) => self.codegen_deinit(place, location),
             StatementKind::SetDiscriminant { place, variant_index } => {
                 // this requires place points to an enum type.
                 let pt = self.place_ty(place);
@@ -157,7 +143,7 @@ impl<'tcx> GotocCtx<'tcx> {
             | StatementKind::Nop
             | StatementKind::Coverage { .. } => Stmt::skip(location),
         }
-        .with_location(self.codegen_span(&stmt.source_info.span))
+        .with_location(location)
     }
 
     /// Generate Goto-c for MIR [Terminator] statements.
@@ -272,6 +258,25 @@ impl<'tcx> GotocCtx<'tcx> {
                 loc,
                 "https://github.com/model-checking/kani/issues/2",
             ),
+        }
+    }
+
+    /// From rustc doc: "This writes `uninit` bytes to the entire place."
+    /// Our model of GotoC has a similar statement, which is later lowered
+    /// to assigning a Nondet in CBMC, with a comment specifying that it
+    /// corresponds to a Deinit.
+    #[cfg(not(feature = "unsound_experiments"))]
+    fn codegen_deinit(&mut self, place: &Place<'tcx>, loc: Location) -> Stmt {
+        let dst_mir_ty = self.place_ty(place);
+        let dst_type = self.codegen_ty(dst_mir_ty);
+        let layout = self.layout_of(dst_mir_ty);
+        if layout.is_zst() || dst_type.sizeof_in_bits(&self.symbol_table) == 0 {
+            // We ignore assignment for all zero size types
+            Stmt::skip(loc)
+        } else {
+            unwrap_or_return_codegen_unimplemented_stmt!(self, self.codegen_place(place))
+                .goto_expr
+                .deinit(loc)
         }
     }
 

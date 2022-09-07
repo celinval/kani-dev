@@ -48,4 +48,4 @@ STD_SRC="$(rustc --print sysroot)/lib/rustlib/src"
 ln -f -s "$STD_SRC" "${OUT_DIR}/rustlib/src"
 
 # Build kani here for now since there's an expected order.
-cargo build --workspace
+cargo build

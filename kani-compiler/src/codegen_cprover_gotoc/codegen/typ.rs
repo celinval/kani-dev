@@ -676,6 +676,15 @@ impl<'tcx> GotocCtx<'tcx> {
         Type::struct_tag(name)
     }
 
+    /// Codegens the an initalizer for variables without one.
+    /// By default, returns `None` which leaves the variable uninitilized.
+    /// In CBMC, this translates to a NONDET value.
+    /// In the future, we might want to replace this with `Poison`.
+    #[cfg(not(feature = "unsound_experiments"))]
+    pub fn codegen_default_initializer(&self, _e: &Expr) -> Option<Expr> {
+        None
+    }
+
     /// The unit type in Rust is an empty struct in gotoc
     pub fn codegen_ty_unit(&mut self) -> Type {
         self.ensure_struct(UNIT_TYPE_EMPTY_STRUCT_NAME, "()", |_, _| vec![])
@@ -1130,7 +1139,7 @@ impl<'tcx> GotocCtx<'tcx> {
                     name: field_name,
                     typ: ctx.codegen_ty(field_ty),
                 });
-                offset += field_size;
+                offset = field_offset + field_size;
             }
             fields.extend(ctx.codegen_alignment_padding(
                 offset,

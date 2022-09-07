@@ -1,6 +1,9 @@
 // Copyright Kani Contributors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+#[cfg(feature = "unsound_experiments")]
+use crate::unsound_experiments::UnsoundExperimentArgs;
+
 use anyhow::bail;
 use clap::{arg_enum, Error, ErrorKind};
 use std::ffi::OsString;
@@ -50,7 +53,6 @@ pub struct KaniArgs {
     #[structopt(
         long,
         requires("enable-unstable"),
-        requires("harness"),
         conflicts_with_all(&["visualize", "dry-run"]),
         possible_values = &ConcretePlaybackMode::variants(),
         case_insensitive = true,
@@ -96,6 +98,10 @@ pub struct KaniArgs {
     #[structopt(flatten)]
     pub checks: CheckArgs,
 
+    #[cfg(feature = "unsound_experiments")]
+    #[structopt(flatten)]
+    pub unsound_experiments: UnsoundExperimentArgs,
+
     /// Entry point for verification (symbol name).
     /// This is an unstable feature. Consider using --harness instead
     #[structopt(long, hidden = true, requires("enable-unstable"), conflicts_with("dry-run"))]
@@ -121,6 +127,9 @@ pub struct KaniArgs {
     /// Run Kani on all packages in the workspace.
     #[structopt(long)]
     pub workspace: bool,
+    /// Run Kani on the specified packages.
+    #[structopt(long, short)]
+    pub package: Vec<String>,
 
     /// Specify the value used for loop unwinding in CBMC
     #[structopt(long)]
