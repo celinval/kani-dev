@@ -11,4 +11,5 @@ edition = "2021"
 [dependencies]
 
 [package.metadata.kani]
-flags = { tests=true }
+# Integration tests are not working with the MIR Linker
+flags = { tests=true, legacy-linker=true }
