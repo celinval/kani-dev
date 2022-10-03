@@ -1,7 +1,8 @@
 // Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-
+// kani-flags: --legacy-linker
 //! Check if we can codegen drop for unsized struct.
+//! MIR linker seems to be missing some drop functions.
 use std::rc::Rc;
 
 pub trait DummyTrait {}
