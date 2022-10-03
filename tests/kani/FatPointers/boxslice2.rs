@@ -1,11 +1,10 @@
 // Copyright Kani Contributors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-// kani-verify-fail
 
 // Casts boxed array to boxed slice (example taken from rust documentation)
 use std::str;
 
-#[kani::proof]
+#[cfg_attr(kani, kani::proof)]
 fn main() {
     // This vector of bytes is used to initialize a Box<[u8; 4]>
     let sparkle_heart_vec = vec![240, 159, 146, 150];
