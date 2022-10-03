@@ -1468,10 +1468,12 @@ impl<'tcx> GotocCtx<'tcx> {
                             {
                                 fields.push(padding);
                             }
-                            let union_name = format!("{}-union", name);
-                            let union_pretty_name = format!("{}-union", pretty_name);
-                            fields.push(DatatypeComponent::field(
-                                "cases",
+                            let non_zst_count =
+                                variants.iter().filter(|layout| layout.size().bytes() > 0).count();
+                            let cases_type = if non_zst_count > 1 {
+                                // Encode variants as a union.
+                                let union_name = format!("{}-union", name);
+                                let union_pretty_name = format!("{}-union", pretty_name);
                                 gcx.ensure_union(&union_name, &union_pretty_name, |ctx, name| {
                                     ctx.codegen_enum_cases(
                                         name,
@@ -1481,8 +1483,30 @@ impl<'tcx> GotocCtx<'tcx> {
                                         variants,
                                         initial_offset,
                                     )
-                                }),
-                            ));
+                                })
+                            } else {
+                                // Encode variants as a struct since there's up to one variant
+                                // with data. This makes CBMC more performant since constant
+                                // propagation doesn't work well with unions.
+                                // Encode variants as a single struct.
+                                let variants_mangled = format!("{}-variants", name);
+                                let variants_pretty = format!("{}-variants", pretty_name);
+                                gcx.ensure_struct(
+                                    &variants_mangled,
+                                    &variants_pretty,
+                                    |ctx, name| {
+                                        ctx.codegen_enum_cases(
+                                            name,
+                                            pretty_name,
+                                            adtdef,
+                                            subst,
+                                            variants,
+                                            initial_offset,
+                                        )
+                                    },
+                                )
+                            };
+                            fields.push(DatatypeComponent::field("cases", cases_type));
                             fields
                         })
                     }
