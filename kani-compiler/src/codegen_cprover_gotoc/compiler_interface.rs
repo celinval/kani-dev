@@ -18,16 +18,21 @@ use rustc_hir::def::DefKind;
 use rustc_metadata::EncodedMetadata;
 use rustc_middle::dep_graph::{WorkProduct, WorkProductId};
 use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
+use rustc_middle::mir::write_mir_pretty;
+use rustc_middle::ty::print::with_no_trimmed_paths;
 use rustc_middle::ty::query::Providers;
-use rustc_middle::ty::{self, TyCtxt};
+use rustc_middle::ty::{self, InstanceDef, TyCtxt};
 use rustc_session::config::{OutputFilenames, OutputType};
 use rustc_session::cstore::MetadataLoaderDyn;
 use rustc_session::Session;
+use rustc_span::def_id::DefId;
 use rustc_target::abi::Endian;
 use rustc_target::spec::PanicStrategy;
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::fs::File;
 use std::io::BufWriter;
+use std::io::Write as IoWrite;
 use std::iter::FromIterator;
 use std::path::Path;
 use std::process::Command;
@@ -74,6 +79,7 @@ impl CodegenBackend for GotocCodegenBackend {
             // There's nothing to do.
             return codegen_results(tcx, rustc_metadata, gcx.symbol_table.machine_model());
         }
+        dump_mir_items(tcx, &items);
 
         // we first declare all items
         for item in &items {
@@ -413,4 +419,46 @@ fn symbol_table_to_gotoc(tcx: &TyCtxt, file: &Path) {
         tcx.sess.err(&err_msg);
         tcx.sess.abort_if_errors();
     }
+}
+
+/// Print MIR for the reachable items if the `--emit mir` option was provided to rustc.
+fn dump_mir_items<'tcx>(tcx: TyCtxt<'tcx>, items: &[MonoItem<'tcx>]) {
+    /// Convert MonoItem into a DefId.
+    /// Skip stuff that we cannot generate the MIR items.
+    fn visible_item<'tcx>(tcx: TyCtxt<'tcx>, item: &MonoItem<'tcx>) -> Option<(String, DefId)> {
+        match item {
+            // Exclude FnShims and others that cannot be dumped.
+            MonoItem::Fn(instance)
+                if matches!(
+                    instance.def,
+                    InstanceDef::FnPtrShim(..) | InstanceDef::ClosureOnceShim { .. }
+                ) =>
+            {
+                None
+            }
+            MonoItem::Fn(instance) => {
+                let name = with_no_trimmed_paths!(
+                    tcx.def_path_str_with_substs(instance.def_id(), instance.substs)
+                );
+                Some((name, instance.def_id()))
+            }
+            MonoItem::Static(def_id) => Some((format!("{:?}", *item), *def_id)),
+            MonoItem::GlobalAsm(_) => None,
+        }
+    }
+
+    if tcx.sess.opts.output_types.contains_key(&OutputType::Mir) {
+        // Create output buffer.
+        let outputs = tcx.output_filenames(());
+        let path = outputs.output_path(OutputType::Mir).with_extension("kani.mir");
+        let out_file = File::create(&path).unwrap();
+        let mut writer = BufWriter::new(out_file);
+
+        // For each def_id, dump their :1MIR
+        for (name, def_id) in items.iter().filter_map(|item| visible_item(tcx, item)) {
+            writeln!(writer, "// Item: {}", name).unwrap();
+            write_mir_pretty(tcx, Some(def_id), &mut writer).unwrap();
+        }
+    }
+    //assert!(false);
 }
