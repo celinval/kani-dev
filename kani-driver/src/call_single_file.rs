@@ -106,7 +106,7 @@ impl KaniSession {
         let mut flags = vec![OsString::from("--goto-c")];
 
         if self.args.debug {
-            flags.push("--log-level=debug".into());
+            flags.push("--log-level=trace".into());
         } else {
             flags.push("--log-level=warn".into());
         }

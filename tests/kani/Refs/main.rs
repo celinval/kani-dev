@@ -63,8 +63,7 @@
 //!                 * working_directory: /Users/dsn/ws/RustToCBMC/src/RustToCBMC/rust-tests/cbmc-reg/Refs
 //!               * value: 0
 //!
-//! Note: This test is taking too long when using --mir-linker. Leave it using the legacy one for
-//! now.
+//! Note: This test takes too long with all the std symbols. Use --legacy-linker for now
 use std::collections::BTreeMap;
 
 pub struct ArgParser<'a> {

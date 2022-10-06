@@ -1,6 +1,8 @@
 // Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // kani-flags: --legacy-linker
+// There seems to be a an issue with drop_in_place with the MIR Linker. The odd thing is that
+// running the monomorphizer with the --always-encode-mir sysroot gives us the same result.
 //! Check if we can codegen drop for unsized struct.
 //! MIR linker seems to be missing some drop functions.
 use std::rc::Rc;
