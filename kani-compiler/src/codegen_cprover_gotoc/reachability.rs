@@ -27,12 +27,12 @@ use rustc_middle::span_bug;
 use rustc_middle::traits::{ImplSource, ImplSourceUserDefinedData};
 use rustc_middle::ty::adjustment::CustomCoerceUnsized;
 use rustc_middle::ty::adjustment::PointerCast;
+use rustc_middle::ty::TypeAndMut;
 use rustc_middle::ty::{
     self, Closure, ClosureKind, Const, ConstKind, Instance, InstanceDef, ParamEnv, TraitRef, Ty,
     TyCtxt, TyKind, TypeFoldable, VtblEntry,
 };
 use rustc_span::def_id::DefId;
-use rustc_span::source_map::DUMMY_SP;
 use tracing::{debug, debug_span, trace, warn};
 
 /// Collect all reachable items starting from the given starting points.
@@ -495,112 +495,59 @@ fn extract_trait_casting<'tcx>(
     dst_ty: Ty<'tcx>,
 ) -> (Ty<'tcx>, Ty<'tcx>) {
     trace!(?dst_ty, ?src_ty, "find_trait_conversion");
-    let (src_ty_inner, dst_ty_inner) = find_vtable_types_for_unsizing(tcx, src_ty, dst_ty);
-    warn!(?dst_ty_inner, ?src_ty_inner, "find_trait_conversion result");
-    (src_ty_inner, dst_ty_inner)
-}
+    let mut src_inner_ty = src_ty;
+    let mut dst_inner_ty = dst_ty;
+    (src_inner_ty, dst_inner_ty) = loop {
+        // Extract pointee types that form the base of the conversion.
+        match (&src_inner_ty.kind(), &dst_inner_ty.kind()) {
+            (&ty::Adt(src_def, src_substs), &ty::Adt(dst_def, dst_substs))
+                if !src_def.is_box() || !dst_def.is_box() =>
+            {
+                assert_eq!(src_def, dst_def);
 
-/// For a given pair of source and target type that occur in an unsizing coercion,
-/// this function finds the pair of types that determines the vtable linking
-/// them.
-///
-/// For example, the source type might be `&SomeStruct` and the target type
-/// might be `&dyn SomeTrait` in a cast like:
-///
-/// ```rust,ignore (not real code)
-/// let src: &SomeStruct = ...;
-/// let target = src as &dyn SomeTrait;
-/// ```
-///
-/// Then the output of this function would be (SomeStruct, SomeTrait) since for
-/// constructing the `target` fat-pointer we need the vtable for that pair.
-///
-/// Things can get more complicated though because there's also the case where
-/// the unsized type occurs as a field:
-///
-/// ```rust
-/// struct ComplexStruct<T: ?Sized> {
-///    a: u32,
-///    b: f64,
-///    c: T
-/// }
-/// ```
-///
-/// In this case, if `T` is sized, `&ComplexStruct<T>` is a thin pointer. If `T`
-/// is unsized, `&SomeStruct` is a fat pointer, and the vtable it points to is
-/// for the pair of `T` (which is a trait) and the concrete type that `T` was
-/// originally coerced from:
-///
-/// ```rust,ignore (not real code)
-/// let src: &ComplexStruct<SomeStruct> = ...;
-/// let target = src as &ComplexStruct<dyn SomeTrait>;
-/// ```
-///
-/// Again, we want this `find_vtable_types_for_unsizing()` to provide the pair
-/// `(SomeStruct, SomeTrait)`.
-///
-/// Finally, there is also the case of custom unsizing coercions, e.g., for
-/// smart pointers such as `Rc` and `Arc`.
-fn find_vtable_types_for_unsizing<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    source_ty: Ty<'tcx>,
-    target_ty: Ty<'tcx>,
-) -> (Ty<'tcx>, Ty<'tcx>) {
-    let ptr_vtable = |inner_source: Ty<'tcx>, inner_target: Ty<'tcx>| {
-        let param_env = ty::ParamEnv::reveal_all();
-        let type_has_metadata = |ty: Ty<'tcx>| -> bool {
-            if ty.is_sized(tcx.at(DUMMY_SP), param_env) {
-                return false;
+                let CustomCoerceUnsized::Struct(coerce_index) =
+                    custom_coerce_unsize_info(tcx, src_inner_ty, dst_inner_ty);
+
+                let src_fields = &src_def.non_enum_variant().fields;
+                let dst_fields = &dst_def.non_enum_variant().fields;
+
+                assert!(coerce_index < src_fields.len() && src_fields.len() == dst_fields.len());
+
+                src_inner_ty = src_fields[coerce_index].ty(tcx, src_substs);
+                dst_inner_ty = dst_fields[coerce_index].ty(tcx, dst_substs);
             }
-            let tail = tcx.struct_tail_erasing_lifetimes(ty, param_env);
-            match tail.kind() {
-                ty::Foreign(..) => false,
-                ty::Str | ty::Slice(..) | ty::Dynamic(..) => true,
-                _ => unreachable!("unexpected unsized tail: {:?}", tail),
-            }
-        };
-        if type_has_metadata(inner_source) {
-            (inner_source, inner_target)
-        } else {
-            tcx.struct_lockstep_tails_erasing_lifetimes(inner_source, inner_target, param_env)
+            _ => break (extract_pointer(src_inner_ty), extract_pointer(dst_inner_ty)),
         }
     };
 
-    match (&source_ty.kind(), &target_ty.kind()) {
-        (&ty::Ref(_, a, _), &ty::Ref(_, b, _) | &ty::RawPtr(ty::TypeAndMut { ty: b, .. }))
-        | (&ty::RawPtr(ty::TypeAndMut { ty: a, .. }), &ty::RawPtr(ty::TypeAndMut { ty: b, .. })) => {
-            ptr_vtable(*a, *b)
-        }
-        (&ty::Adt(def_a, _), &ty::Adt(def_b, _)) if def_a.is_box() && def_b.is_box() => {
-            ptr_vtable(source_ty.boxed_ty(), target_ty.boxed_ty())
-        }
-
-        (&ty::Adt(source_adt_def, source_substs), &ty::Adt(target_adt_def, target_substs)) => {
-            assert_eq!(source_adt_def, target_adt_def);
-
-            let CustomCoerceUnsized::Struct(coerce_index) =
-                custom_coerce_unsize_info(tcx, source_ty, target_ty);
-
-            let source_fields = &source_adt_def.non_enum_variant().fields;
-            let target_fields = &target_adt_def.non_enum_variant().fields;
-
-            assert!(
-                coerce_index < source_fields.len() && source_fields.len() == target_fields.len()
-            );
-
-            find_vtable_types_for_unsizing(
-                tcx,
-                source_fields[coerce_index].ty(tcx, source_substs),
-                target_fields[coerce_index].ty(tcx, target_substs),
-            )
-        }
-        _ => unreachable!(
-            "find_vtable_types_for_unsizing: invalid coercion {:?} -> {:?}",
-            source_ty, target_ty
-        ),
+    if has_vtable_metadata(tcx, src_inner_ty) {
+        (src_inner_ty, dst_inner_ty)
+    } else {
+        tcx.struct_lockstep_tails_erasing_lifetimes(
+            src_inner_ty,
+            dst_inner_ty,
+            ParamEnv::reveal_all(),
+        )
     }
 }
 
+/// Extract pointer from builtin pointer types.
+fn extract_pointer(typ: Ty) -> Ty {
+    if let Some(TypeAndMut { ty, .. }) = typ.builtin_deref(true) {
+        ty
+    } else {
+        unreachable!("Expected pointer type, found: {:?}", typ);
+    }
+}
+
+/// Check if the type has metadata.
+fn has_vtable_metadata<'tcx>(tcx: TyCtxt<'tcx>, mir_type: Ty<'tcx>) -> bool {
+    let (metadata, _) = mir_type.ptr_metadata_ty(tcx, |ty| ty);
+    metadata != tcx.types.unit && metadata != tcx.types.usize
+}
+
+/// Get information about an unsized coercion.
+/// This code was extracted from `rustc_monomorphize` crate.
 fn custom_coerce_unsize_info<'tcx>(
     tcx: TyCtxt<'tcx>,
     source_ty: Ty<'tcx>,
