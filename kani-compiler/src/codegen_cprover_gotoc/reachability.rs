@@ -50,7 +50,6 @@ pub fn collect_reachable_items<'tcx>(
     // Sort the result so code generation follows deterministic order.
     // This helps us to debug the code, but it also provides the user a good experience since the
     // order of the errors and warnings is stable.
-    check_result(tcx, &collector.collected);
     let mut sorted_items: Vec<_> = collector.collected.into_iter().collect();
     sorted_items.sort_by_cached_key(|item| to_fingerprint(tcx, item));
     sorted_items
@@ -191,10 +190,7 @@ impl<'a, 'tcx> MonoItemsFnCollector<'a, 'tcx> {
                     VtblEntry::Method(instance) if should_codegen_locally(self.tcx, instance) => {
                         Some(MonoItem::Fn(instance.polymorphize(self.tcx)))
                     }
-                    VtblEntry::Method(instance) => {
-                        warn!("skipping: {:?}", instance);
-                        None
-                    }
+                    VtblEntry::Method(..) => None,
                 });
                 trace!(methods=?methods.clone().collect::<Vec<_>>(), "collect_vtable_methods");
                 self.collected.extend(methods);
@@ -203,12 +199,11 @@ impl<'a, 'tcx> MonoItemsFnCollector<'a, 'tcx> {
 
         // Add the destructor for the concrete type.
         let instance = Instance::resolve_drop_in_place(self.tcx, concrete_ty);
-        self.collect_instance(instance, false, "vtable");
+        self.collect_instance(instance, false);
     }
 
     /// Collect an instance depending on how it is used (invoked directly or via fn_ptr).
-    fn collect_instance(&mut self, instance: Instance<'tcx>, is_direct_call: bool, from: &str) {
-        trace!(from, ?instance, ?is_direct_call, "collect_instance");
+    fn collect_instance(&mut self, instance: Instance<'tcx>, is_direct_call: bool) {
         let should_collect = match instance.def {
             InstanceDef::Virtual(..) | InstanceDef::Intrinsic(_) => {
                 // Instance definition has no body.
@@ -230,8 +225,6 @@ impl<'a, 'tcx> MonoItemsFnCollector<'a, 'tcx> {
         if should_collect && should_codegen_locally(self.tcx, &instance) {
             trace!(?instance, "collect_instance");
             self.collected.insert(MonoItem::Fn(instance.polymorphize(self.tcx)));
-        } else {
-            warn!("Ignore {:?} ({})", instance, is_direct_call);
         }
     }
 
@@ -274,23 +267,21 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
     /// - Functions / Closures that have their address taken.
     /// - Thread Local.
     fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
-        warn!(rvalue=?*rvalue, "visit_rvalue");
+        trace!(rvalue=?*rvalue, "visit_rvalue");
 
         match *rvalue {
             Rvalue::Cast(CastKind::Pointer(PointerCast::Unsize), ref operand, target) => {
-                warn!("visit_rvalue cast 1");
                 // Check if the conversion include casting a concrete type to a trait type.
                 // If so, collect items from the impl `Trait for Concrete {}`.
                 let target_ty = self.monomorphize(target);
                 let source_ty = self.monomorphize(operand.ty(self.body, self.tcx));
                 let (src_inner, dst_inner) = extract_trait_casting(self.tcx, source_ty, target_ty);
                 if !src_inner.is_trait() && dst_inner.is_trait() {
-                    warn!(concrete_ty=?src_inner, trait_ty=?dst_inner, "collect_vtable_methods");
+                    debug!(concrete_ty=?src_inner, trait_ty=?dst_inner, "collect_vtable_methods");
                     self.collect_vtable_methods(src_inner, dst_inner);
                 }
             }
             Rvalue::Cast(CastKind::Pointer(PointerCast::ReifyFnPointer), ref operand, _) => {
-                warn!("visit_rvalue cast 2");
                 let fn_ty = operand.ty(self.body, self.tcx);
                 let fn_ty = self.monomorphize(fn_ty);
                 if let TyKind::FnDef(def_id, substs) = *fn_ty.kind() {
@@ -301,13 +292,12 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
                         substs,
                     )
                     .unwrap();
-                    self.collect_instance(instance, false, "rvalue");
+                    self.collect_instance(instance, false);
                 } else {
                     unreachable!("Expected FnDef type, but got: {:?}", fn_ty);
                 }
             }
             Rvalue::Cast(CastKind::Pointer(PointerCast::ClosureFnPointer(_)), ref operand, _) => {
-                warn!("visit_rvalue cast 3");
                 let source_ty = operand.ty(self.body, self.tcx);
                 let source_ty = self.monomorphize(source_ty);
                 match *source_ty.kind() {
@@ -319,13 +309,12 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
                             ClosureKind::FnOnce,
                         )
                         .expect("failed to normalize and resolve closure during codegen");
-                        self.collect_instance(instance, false, "closure");
+                        self.collect_instance(instance, false);
                     }
                     _ => unreachable!("Unexpected type: {:?}", source_ty),
                 }
             }
             Rvalue::ThreadLocalRef(def_id) => {
-                warn!("visit_rvalue thread local");
                 assert!(self.tcx.is_thread_local_static(def_id));
                 trace!(?def_id, "visit_rvalue thread_local");
                 let instance = Instance::mono(self.tcx, def_id);
@@ -334,10 +323,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
                     self.collected.insert(MonoItem::Static(def_id));
                 }
             }
-            _ => {
-                /* not interesting */
-                warn!("visit_rvalue aff");
-            }
+            _ => { /* not interesting */ }
         }
 
         self.super_rvalue(rvalue, location);
@@ -398,7 +384,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
                         Instance::resolve(self.tcx, ParamEnv::reveal_all(), def_id, substs)
                             .unwrap()
                             .unwrap();
-                    self.collect_instance(instance, true, "Call");
+                    self.collect_instance(instance, true);
                 } else {
                     assert!(
                         matches!(fn_ty.kind(), TyKind::FnPtr(..)),
@@ -412,7 +398,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
                 let place_ty = place.ty(self.body, self.tcx).ty;
                 let place_mono_ty = self.monomorphize(place_ty);
                 let instance = Instance::resolve_drop_in_place(self.tcx, place_mono_ty);
-                self.collect_instance(instance, true, "drop/replace");
+                self.collect_instance(instance, true);
             }
             TerminatorKind::InlineAsm { .. } => {
                 // We don't support inline assembly. This shall be replaced by an unsupported
@@ -448,23 +434,14 @@ fn to_fingerprint(tcx: TyCtxt, item: &MonoItem) -> Fingerprint {
     })
 }
 
-/// Function that allow us to easily identify if we are missing any component that might be
-/// included by the monomorphizer.
-/// To use this, make sure that either the method has a main that only calls all harnesses or
-/// that the harnesses are the only roots of the package.
-#[allow(dead_code)]
-fn check_result<'tcx>(tcx: TyCtxt<'tcx>, result: &FxHashSet<MonoItem<'tcx>>) {
-    // Use rustc monomorphizer to retrieve items to codegen.
-    tcx.collect_and_partition_mono_items(())
-        .1
-        .iter()
-        .flat_map(|cgu| cgu.items_in_deterministic_order(tcx))
-        .filter(|(item, _)| !result.contains(item))
-        .for_each(|item| tracing::error!("Missing: {:?}", item));
-}
-
 /// Return whether we should include the item into codegen.
-/// We don't include foreign items and items that don't have MIR.
+/// - We only skip foreign items.
+///
+/// Note: Ideally, we should be able to assert that the MIR for non-foreign items are available via
+/// call to `tcx.is_mir_available (def_id)`.
+/// However, we found an issue where this function was returning `false` for a mutable static
+/// item with constant initializer from an upstream crate.
+/// See <https://github.com/model-checking/kani/issues/1760> for an example.
 fn should_codegen_locally<'tcx>(tcx: TyCtxt<'tcx>, instance: &Instance<'tcx>) -> bool {
     if let Some(def_id) = instance.def.def_id_if_not_guaranteed_local_codegen() {
         // We cannot codegen foreign items.
@@ -476,19 +453,30 @@ fn should_codegen_locally<'tcx>(tcx: TyCtxt<'tcx>, instance: &Instance<'tcx>) ->
     }
 }
 
-/// Extract the pair (from_ty, to_ty) for a unsized cast.
+/// Extract the pair (`T`, `U`) for a unsized coercion where type `T` implements `Unsize<U>`.
+/// I.e., `U` is either a trait or a slice.
+/// For more details, please refer to:
+/// <https://doc.rust-lang.org/reference/type-coercions.html#unsized-coercions>
+///
+/// This is used to determine the vtable implementation that must be tracked by the fat pointer.
 ///
 /// For example, if `&u8` is being converted to `&dyn Debug`, this method would return:
 /// `(u8, dyn Debug)`.
 ///
-/// This method also handles nested cases and `std` smart pointers. E.g.:
-///
-/// Conversion between `Rc<Wrapper<String>>` into `Rc<Wrapper<dyn Debug>>` should return:
-/// `(String, dyn Debug)`
-///
-/// TODO: Do we need to handle &Wrapper<dyn T1> to &dyn T2 or is that taken care of with super
-/// trait handling?
-/// <https://github.com/model-checking/kani/issues/1692>
+/// There are a few interesting cases (references / pointers are handled the same way):
+/// 1. Coercion between `&T` to `&U`.
+///    - This is the base case.
+///    - In this case, we extract the type that is pointed to.
+/// 2. Coercion between smart pointers like `Rc<T>` to `Rc<U>`.
+///    - Smart pointers implement the `CoerceUnsize` trait.
+///    - Use CustomCoerceUnsized information to traverse the smart pointer structure and find the
+///      underlying pointer.
+///    - Use base case to extract `T` and `U`.
+/// 3. Coercion between `&Wrapper<T>` to `&Wrapper<U>`.
+///    - Apply base case to extract the pair `(Wrapper<T>, Wrapper<U>)`.
+///    - Extract the tail element of the struct which are of type `T` and `U`, respectively.
+/// 4. Coercion between smart pointers of wrapper structs.
+///    - Apply the logic from item 2 then item 3.
 fn extract_trait_casting<'tcx>(
     tcx: TyCtxt<'tcx>,
     src_ty: Ty<'tcx>,
@@ -498,20 +486,22 @@ fn extract_trait_casting<'tcx>(
     let mut src_inner_ty = src_ty;
     let mut dst_inner_ty = dst_ty;
     (src_inner_ty, dst_inner_ty) = loop {
-        // Extract pointee types that form the base of the conversion.
+        // Extract the pointee types from pointers (including smart pointers) that form the base of
+        // the conversion.
         match (&src_inner_ty.kind(), &dst_inner_ty.kind()) {
             (&ty::Adt(src_def, src_substs), &ty::Adt(dst_def, dst_substs))
                 if !src_def.is_box() || !dst_def.is_box() =>
             {
+                // Handle smart pointers by using CustomCoerceUnsized to find the field being
+                // coerced.
                 assert_eq!(src_def, dst_def);
+                let src_fields = &src_def.non_enum_variant().fields;
+                let dst_fields = &dst_def.non_enum_variant().fields;
+                assert_eq!(src_fields.len(), dst_fields.len());
 
                 let CustomCoerceUnsized::Struct(coerce_index) =
                     custom_coerce_unsize_info(tcx, src_inner_ty, dst_inner_ty);
-
-                let src_fields = &src_def.non_enum_variant().fields;
-                let dst_fields = &dst_def.non_enum_variant().fields;
-
-                assert!(coerce_index < src_fields.len() && src_fields.len() == dst_fields.len());
+                assert!(coerce_index < src_fields.len());
 
                 src_inner_ty = src_fields[coerce_index].ty(tcx, src_substs);
                 dst_inner_ty = dst_fields[coerce_index].ty(tcx, dst_substs);
@@ -541,6 +531,7 @@ fn extract_pointee(typ: Ty) -> Option<Ty> {
 
 /// Get information about an unsized coercion.
 /// This code was extracted from `rustc_monomorphize` crate.
+/// <https://github.com/rust-lang/rust/blob/4891d57f7aab37b5d6a84f2901c0bb8903111d53/compiler/rustc_monomorphize/src/lib.rs#L25-L46>
 fn custom_coerce_unsize_info<'tcx>(
     tcx: TyCtxt<'tcx>,
     source_ty: Ty<'tcx>,
@@ -590,4 +581,19 @@ fn collect_alloc_items<'tcx>(tcx: TyCtxt<'tcx>, alloc_id: AllocId) -> Vec<MonoIt
         }
     };
     items
+}
+
+/// Function that allow us to easily identify if we are missing any component that might be
+/// included by the monomorphizer.
+/// To use this, make sure that either the method has a main that only calls all harnesses or
+/// that the harnesses are the only roots of the package.
+#[allow(dead_code)]
+fn check_result<'tcx>(tcx: TyCtxt<'tcx>, result: &FxHashSet<MonoItem<'tcx>>) {
+    // Use rustc monomorphizer to retrieve items to codegen.
+    tcx.collect_and_partition_mono_items(())
+        .1
+        .iter()
+        .flat_map(|cgu| cgu.items_in_deterministic_order(tcx))
+        .filter(|(item, _)| !result.contains(item))
+        .for_each(|item| tracing::error!("Missing: {:?}", item));
 }

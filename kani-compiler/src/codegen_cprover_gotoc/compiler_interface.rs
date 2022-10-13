@@ -130,6 +130,8 @@ impl CodegenBackend for GotocCodegenBackend {
         // Print compilation report.
         print_report(&gcx, tcx);
 
+        let unsupported_features = gcx.unsupported_metadata();
+
         // perform post-processing symbol table passes
         let passes = self.queries.get_symbol_table_passes();
         let symtab = symtab_transformer::do_passes(gcx.symbol_table, &passes);
@@ -145,7 +147,11 @@ impl CodegenBackend for GotocCodegenBackend {
             None
         };
 
-        let metadata = KaniMetadata { proof_harnesses: gcx.proof_harnesses };
+        let metadata = KaniMetadata {
+            proof_harnesses: gcx.proof_harnesses,
+            unsupported_features,
+            test_harnesses: gcx.test_harnesses,
+        };
 
         // No output should be generated if user selected no_codegen.
         if !tcx.sess.opts.unstable_opts.no_codegen && tcx.sess.opts.output_types.should_codegen() {
@@ -305,7 +311,7 @@ where
 {
     let filename = base_filename.with_extension(extension);
     debug!("output to {:?}", filename);
-    let out_file = ::std::fs::File::create(&filename).unwrap();
+    let out_file = File::create(&filename).unwrap();
     let writer = BufWriter::new(out_file);
     if pretty {
         serde_json::to_writer_pretty(writer, &source).unwrap();
@@ -363,7 +369,6 @@ fn codegen_results(
 ///
 /// To be implemented:
 /// - PubFns: Cross-crate reachability analysis that use the local public fns as starting point.
-
 fn collect_codegen_items<'tcx>(gcx: &GotocCtx<'tcx>) -> Vec<MonoItem<'tcx>> {
     let tcx = gcx.tcx;
     let reach = gcx.queries.get_reachability_analysis();
@@ -385,14 +390,11 @@ fn collect_codegen_items<'tcx>(gcx: &GotocCtx<'tcx>) -> Vec<MonoItem<'tcx>> {
         }
         ReachabilityType::None => Vec::new(),
         ReachabilityType::PubFns => {
-            // TODO: https://github.com/model-checking/kani/issues/1674
-            let err_msg = format!(
-                "Using {} reachability mode is still unsupported.",
-                ReachabilityType::PubFns.as_ref()
-            );
-            tcx.sess.err(&err_msg);
-            tcx.sess.abort_if_errors();
-            unreachable!("Session should've been aborted")
+            let entry_fn = tcx.entry_fn(()).map(|(id, _)| id);
+            let local_reachable = filter_crate_items(tcx, |_, def_id| {
+                tcx.is_reachable_non_generic(def_id) || entry_fn == Some(def_id)
+            });
+            collect_reachable_items(tcx, &local_reachable).into_iter().collect()
         }
     }
 }
