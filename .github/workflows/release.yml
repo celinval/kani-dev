@@ -37,15 +37,15 @@ jobs:
         run: |
           # Output for upload scripts to see
           echo ::set-output name=version::${{ env.TAG_VERSION }}
-          # Validate git tag & Cargo.toml are in sync on version number
-          if [[ ${{ env.CRATE_VERSION }} != ${{ env.TAG_VERSION }} ]]; then
-            echo "Git tag ${{env.TAG_VERSION}} did not match crate version ${{env.CRATE_VERSION}}"
-            exit 1
-          fi
           # Check the action script's tag.
           if ! grep -F "image: docker://ghcr.io/model-checking/kani-ubuntu-20.04:${{ env.TAG_VERSION }}" kani-action/action.yml; then
             echo "Git tag ${{env.TAG_VERSION}} did not match version in action.yml"
             exit 1;
+          fi
+          # Validate git tag & Cargo.toml are in sync on version number
+          if [[ ${{ env.CRATE_VERSION }} != ${{ env.TAG_VERSION }} ]]; then
+            echo "Git tag ${{env.TAG_VERSION}} did not match crate version ${{env.CRATE_VERSION}}"
+            exit 1
           fi
 
       - name: Create release
