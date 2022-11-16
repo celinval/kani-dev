@@ -10,4 +10,4 @@ edition = "2021"
 anyhow = "1"
 
 [package.metadata.kani]
-flags = { assess=true, enable-unstable=true }
+flags = { assess=true, enable-unstable=true, legacy-linker=true }
