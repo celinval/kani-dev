@@ -334,6 +334,7 @@ impl<'tcx> GotocCtx<'tcx> {
                 original_start_line: loc.start_line().unwrap() as usize,
                 original_end_line: loc.end_line().unwrap() as usize,
                 unwind_value: None,
+                model_file: None,
             })
         }
     }
@@ -390,6 +391,7 @@ impl<'tcx> GotocCtx<'tcx> {
             original_start_line: loc.start_line().unwrap() as usize,
             original_end_line: loc.end_line().unwrap() as usize,
             unwind_value: None,
+            model_file: None,
         }
     }
 

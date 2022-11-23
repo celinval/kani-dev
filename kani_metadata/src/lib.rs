@@ -1,13 +1,15 @@
 // Copyright Kani Contributors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-mod harness;
-mod vtable;
+use serde::{Deserialize, Serialize};
 
 pub use harness::*;
+pub use outputs::*;
 pub use vtable::*;
 
-use serde::{Deserialize, Serialize};
+mod harness;
+mod outputs;
+mod vtable;
 
 /// The structure of `.kani-metadata.json` files, which are emitted for each crate
 #[derive(Debug, Clone, Serialize, Deserialize)]
