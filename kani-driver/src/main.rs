@@ -11,7 +11,7 @@ use structopt::StructOpt;
 use args::CargoKaniSubcommand;
 use args_toml::join_args;
 
-use crate::project::Project;
+use crate::project::{Project, StandaloneProjectBuilder};
 use crate::session::KaniSession;
 use tracing::debug;
 
@@ -72,7 +72,7 @@ fn standalone_main() -> Result<()> {
     args.validate();
     let session = session::KaniSession::new(args.common_opts)?;
 
-    let project = project::standalone_project(&args.input, &session)?;
+    let project = StandaloneProjectBuilder::try_new(&args.input, &session)?.build()?;
     if session.args.only_codegen { Ok(()) } else { verify_project(project, session) }
 }
 

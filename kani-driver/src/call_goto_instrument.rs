@@ -8,6 +8,7 @@ use std::io::BufReader;
 use std::path::Path;
 use std::process::Command;
 
+use crate::metadata::collect_and_link_function_pointer_restrictions;
 use crate::project::Project;
 use crate::session::KaniSession;
 use crate::util::alter_extension;
@@ -70,9 +71,15 @@ impl KaniSession {
 
     /// Apply --restrict-vtable to a goto binary.
     pub fn apply_vtable_restrictions(&self, goto_file: &Path, restrictions: &Path) -> Result<()> {
+        let linked_restrictions = alter_extension(goto_file, "linked-restrictions.json");
+        self.record_temporary_files(&[&linked_restrictions]);
+        if !self.args.dry_run {
+            collect_and_link_function_pointer_restrictions(restrictions, &linked_restrictions)?;
+        }
+
         let args: Vec<OsString> = vec![
             "--function-pointer-restrictions-file".into(),
-            restrictions.into(),
+            linked_restrictions.into(),
             goto_file.to_owned().into_os_string(), // input
             goto_file.to_owned().into_os_string(), // output
         ];

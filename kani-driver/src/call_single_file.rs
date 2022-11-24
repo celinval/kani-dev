@@ -10,6 +10,7 @@ use crate::session::{KaniSession, ReachabilityMode};
 
 impl KaniSession {
     /// Used by `kani` and not `cargo-kani` to process a single Rust file into a `.symtab.json`
+    // TODO: Move these functions to be part of the builder.
     pub fn compile_single_rust_file(
         &self,
         file: &Path,
