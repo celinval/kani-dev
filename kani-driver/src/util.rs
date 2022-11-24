@@ -14,7 +14,7 @@ pub fn alter_extension(path: &Path, ext: &str) -> PathBuf {
 /// Note that this method will replace invalid characters from the crate name.
 pub fn crate_name(path: &Path) -> String {
     let stem = path.file_stem().unwrap().to_str().expect("utf-8 filename");
-    stem.replace('-', "_").replace('.', "_")
+    stem.replace(['-', '.'], "_")
 }
 
 /// Attempt to guess the rlib name for rust source file.

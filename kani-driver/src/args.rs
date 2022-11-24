@@ -407,6 +407,17 @@ impl StandaloneArgs {
 impl CargoKaniArgs {
     pub fn validate(&self) {
         self.common_opts.validate();
+
+        // --assess requires --enable-unstable, but the subcommand needs manual checking
+        if (matches!(self.command, Some(CargoKaniSubcommand::Assess)) || self.common_opts.assess)
+            && !self.common_opts.enable_unstable
+        {
+            Error::with_description(
+                "Assess is unstable and requires 'cargo kani --enable-unstable assess'",
+                clap::ErrorKind::MissingRequiredArgument,
+            )
+            .exit()
+        }
     }
 }
 impl KaniArgs {

@@ -36,6 +36,9 @@ mod util;
 #[cfg(feature = "unsound_experiments")]
 mod unsound_experiments;
 
+/// The main function for the `kani-driver`.
+/// The driver can be invoked via `cargo kani` and `kani` commands, which determines what kind of
+/// project should be verified.
 fn main() -> Result<()> {
     match determine_invocation_type(Vec::from_iter(std::env::args_os())) {
         InvocationType::CargoKani(args) => cargokani_main(args),
@@ -43,6 +46,7 @@ fn main() -> Result<()> {
     }
 }
 
+/// The main function for the `cargo kani` command.
 fn cargokani_main(input_args: Vec<OsString>) -> Result<()> {
     let input_args = join_args(input_args)?;
     let args = args::CargoKaniArgs::from_iter(input_args);
@@ -50,15 +54,7 @@ fn cargokani_main(input_args: Vec<OsString>) -> Result<()> {
     let session = session::KaniSession::new(args.common_opts)?;
 
     if matches!(args.command, Some(CargoKaniSubcommand::Assess)) || session.args.assess {
-        // --assess requires --enable-unstable, but the subcommand needs manual checking
-        if !session.args.enable_unstable {
-            clap::Error::with_description(
-                "Assess is unstable and requires 'cargo kani --enable-unstable assess'",
-                clap::ErrorKind::MissingRequiredArgument,
-            )
-            .exit()
-        }
-        // Run the alternative command instead
+        // Run cargo assess.
         return assess::cargokani_assess_main(session);
     }
 
@@ -66,6 +62,7 @@ fn cargokani_main(input_args: Vec<OsString>) -> Result<()> {
     if session.args.only_codegen { Ok(()) } else { verify_project(project, session) }
 }
 
+/// The main function for the `kani` command.
 fn standalone_main() -> Result<()> {
     // Argument Processing
     let args = args::StandaloneArgs::from_args();
@@ -76,13 +73,13 @@ fn standalone_main() -> Result<()> {
     if session.args.only_codegen { Ok(()) } else { verify_project(project, session) }
 }
 
+/// Run verification on the given project.
 fn verify_project(project: Project, session: KaniSession) -> Result<()> {
     let harnesses = session.determine_targets(&project.get_all_harnesses())?;
     debug!(?project, "verify_project");
     debug!(?harnesses, "verify_project");
 
     // Verification
-    // TODO: Filter harnesses.
     let runner = harness_runner::HarnessRunner { sess: &session, project };
     let results = runner.check_all_harnesses(&harnesses)?;
 

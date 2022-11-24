@@ -8,6 +8,7 @@ use crate::util::{crate_name, guess_rlib_name};
 use anyhow::Result;
 use kani_metadata::{ArtifactType, HarnessMetadata, KaniMetadata};
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 /// This structure represent the project information relevant for verification.
@@ -30,10 +31,9 @@ impl Project {
     pub fn get_all_harnesses(&self) -> Vec<&HarnessMetadata> {
         self.metadata
             .iter()
-            .map(|crate_metadata| {
+            .flat_map(|crate_metadata| {
                 crate_metadata.proof_harnesses.iter().chain(crate_metadata.test_harnesses.iter())
             })
-            .flatten()
             .collect()
     }
 
@@ -84,10 +84,25 @@ impl AsRef<Path> for Artifact {
     }
 }
 
+impl Deref for Artifact {
+    type Target = Path;
+    fn deref(&self) -> &Self::Target {
+        &self.path
+    }
+}
+
 impl Artifact {
     fn has_type(&self, typ: ArtifactType) -> bool {
         self.typ == typ
     }
+}
+
+pub fn cargo_project(session: &KaniSession) -> Result<Project> {
+    let _outputs = session.cargo_build()?;
+    // This should be done per crate not per project.
+    //let linked_obj = outputs.outdir.join("cbmc-linked.out");
+    //session.link_goto_binary(&goto_objs, &linked_obj)?;
+    todo!("Link and translate to Project.")
 }
 
 pub struct StandaloneProjectBuilder<'a> {
@@ -160,13 +175,13 @@ impl<'a> StandaloneProjectBuilder<'a> {
             artifacts: self
                 .artifacts
                 .into_values()
-                .filter(|artifact| artifact.as_ref().exists() || dry_run)
+                .filter(|artifact| artifact.path.exists() || dry_run)
                 .collect(),
         })
     }
 
     fn artifact(&self, typ: ArtifactType) -> &Path {
-        self.artifacts.get(&typ).unwrap().as_ref()
+        &self.artifacts.get(&typ).unwrap().path
     }
 
     fn metadata_with_function(&self, mut metadata: KaniMetadata) -> KaniMetadata {
@@ -191,12 +206,4 @@ fn standalone_artifact(out_dir: &Path, crate_name: &String, typ: ArtifactType) -
     let mut path = out_dir.join(crate_name);
     let _ = path.set_extension(&typ);
     Artifact { harness_mangled: None, crate_name: crate_name.clone(), path, typ }
-}
-
-pub fn cargo_project(session: &KaniSession) -> Result<Project> {
-    let _outputs = session.cargo_build()?;
-    // This should be done per crate not per project.
-    //let linked_obj = outputs.outdir.join("cbmc-linked.out");
-    //session.link_goto_binary(&goto_objs, &linked_obj)?;
-    todo!("Link and translate to Project.")
 }
