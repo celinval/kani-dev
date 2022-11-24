@@ -10,6 +10,7 @@ use kani_metadata::{ArtifactType, HarnessMetadata, KaniMetadata};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use tracing::debug;
 
 /// This structure represent the project information relevant for verification.
 /// For dry-run, this structure is populated with mock data.
@@ -97,12 +98,49 @@ impl Artifact {
     }
 }
 
+fn cargo_artifact(metadata: &Path, crate_name: &str, typ: ArtifactType) -> Option<Artifact> {
+    let path = metadata.with_extension(&typ);
+    if path.exists() {
+        Some(Artifact { harness_mangled: None, crate_name: crate_name.to_string(), path, typ })
+    } else {
+        None
+    }
+}
+
 pub fn cargo_project(session: &KaniSession) -> Result<Project> {
-    let _outputs = session.cargo_build()?;
-    // This should be done per crate not per project.
-    //let linked_obj = outputs.outdir.join("cbmc-linked.out");
-    //session.link_goto_binary(&goto_objs, &linked_obj)?;
-    todo!("Link and translate to Project.")
+    let outputs = session.cargo_build()?;
+    let mut metadata = vec![];
+    let mut artifacts = vec![];
+    if session.args.dry_run {
+        // Just fake a project and a call to the linker.
+        todo!()
+    } else if session.args.legacy_linker {
+        // For the legacy linker or `--function` support, we still use a glob to link everything.
+        // Yes, this is broken, but it has been broken for quite some time.
+        todo!()
+    } else {
+        // For the MIR Linker we know there is only one artifact per verification target. Use
+        // that in our favor.
+        for meta_file in outputs.metadata {
+            // Link the artifact.
+            let base_path = meta_file.parent().unwrap().join(meta_file.file_stem().unwrap());
+            let symtab_out = base_path.with_extension(&ArtifactType::SymTabGoto);
+            let goto = base_path.with_extension(&ArtifactType::Goto);
+            session.link_goto_binary(&[symtab_out], &goto)?;
+
+            // Store project information.
+            let crate_metadata: KaniMetadata = from_json(&meta_file)?;
+            let crate_name = &crate_metadata.crate_name;
+            artifacts.extend(
+                BUILD_ARTIFACTS
+                    .iter()
+                    .filter_map(|typ| cargo_artifact(&base_path, crate_name, *typ)),
+            );
+            debug!(?crate_name, ?crate_metadata, "cargo_project");
+            metadata.push(crate_metadata);
+        }
+        Ok(Project { outdir: outputs.outdir, artifacts, metadata })
+    }
 }
 
 pub struct StandaloneProjectBuilder<'a> {
@@ -118,6 +156,16 @@ pub struct StandaloneProjectBuilder<'a> {
     session: &'a KaniSession,
 }
 
+/// All the type of artifacts that may be generated as part of the build.
+const BUILD_ARTIFACTS: [ArtifactType; 6] = [
+    ArtifactType::Metadata,
+    ArtifactType::Goto,
+    ArtifactType::SymTab,
+    ArtifactType::SymTabGoto,
+    ArtifactType::TypeMap,
+    ArtifactType::VTableRestriction,
+];
+
 impl<'a> StandaloneProjectBuilder<'a> {
     pub fn try_new(input: &Path, session: &'a KaniSession) -> Result<Self> {
         let outdir = session
@@ -126,15 +174,8 @@ impl<'a> StandaloneProjectBuilder<'a> {
             .clone()
             .unwrap_or_else(|| input.canonicalize().unwrap().parent().unwrap().to_owned());
         let crate_name = crate_name(&input);
-        let artifacts = [
-            ArtifactType::Metadata,
-            ArtifactType::Goto,
-            ArtifactType::SymTab,
-            ArtifactType::SymTabGoto,
-            ArtifactType::TypeMap,
-            ArtifactType::VTableRestriction,
-        ]
-        .map(|typ| (typ, standalone_artifact(&outdir, &crate_name, typ)));
+        let artifacts =
+            BUILD_ARTIFACTS.map(|typ| (typ, standalone_artifact(&outdir, &crate_name, typ)));
         Ok(StandaloneProjectBuilder {
             outdir,
             artifacts: HashMap::from(artifacts),
@@ -151,18 +192,21 @@ impl<'a> StandaloneProjectBuilder<'a> {
         self.session.record_temporary_files(&self.artifacts.values().collect::<Vec<_>>());
 
         // Build and link the artifacts.
-        let dry_run = self.session.args.dry_run;
+        debug!(krate=?self.crate_name, input=?self.input, ?rlib_path, "build compile");
         self.session.compile_single_rust_file(&self.input, &self.crate_name, &self.outdir)?;
         let symtab_out = self.artifact(ArtifactType::SymTabGoto);
         let goto = self.artifact(ArtifactType::Goto);
+
+        let dry_run = self.session.args.dry_run;
         if dry_run || symtab_out.exists() {
+            debug!(?symtab_out, "build link");
             self.session.link_goto_binary(&[symtab_out.to_path_buf()], goto)?;
         }
 
         // Create the project with the artifacts built by the compiler.
         let metadata_path = self.artifact(ArtifactType::Metadata);
         let metadata = if dry_run {
-            self.dry_run_metadata()
+            dry_run_metadata(&self.crate_name)
         } else if metadata_path.exists() {
             self.metadata_with_function(from_json(metadata_path)?)
         } else {
@@ -191,19 +235,19 @@ impl<'a> StandaloneProjectBuilder<'a> {
         }
         metadata
     }
-
-    fn dry_run_metadata(&self) -> KaniMetadata {
-        KaniMetadata {
-            crate_name: self.crate_name.clone(),
-            proof_harnesses: vec![mock_proof_harness("harness", None, Some(&self.crate_name))],
-            unsupported_features: vec![],
-            test_harnesses: vec![],
-        }
-    }
 }
 
 fn standalone_artifact(out_dir: &Path, crate_name: &String, typ: ArtifactType) -> Artifact {
     let mut path = out_dir.join(crate_name);
     let _ = path.set_extension(&typ);
     Artifact { harness_mangled: None, crate_name: crate_name.clone(), path, typ }
+}
+
+fn dry_run_metadata(crate_name: &str) -> KaniMetadata {
+    KaniMetadata {
+        crate_name: crate_name.to_string(),
+        proof_harnesses: vec![mock_proof_harness("harness", None, Some(crate_name))],
+        unsupported_features: vec![],
+        test_harnesses: vec![],
+    }
 }
