@@ -11,6 +11,8 @@ pub struct HarnessMetadata {
     pub pretty_name: String,
     /// The name of the function in the CBMC symbol table.
     pub mangled_name: String,
+    /// The name of the crate this harness belongs to.
+    pub crate_name: String,
     /// The (currently full-) path to the file this proof harness was declared within.
     pub original_file: String,
     /// The line in that file where the proof harness begins.

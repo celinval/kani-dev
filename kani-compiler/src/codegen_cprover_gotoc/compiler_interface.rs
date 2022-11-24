@@ -19,13 +19,14 @@ use tracing::{debug, error, warn};
 
 use cbmc::goto_program::Location;
 use cbmc::{InternedString, MachineModel};
-use kani_metadata::{HarnessMetadata, KaniFileType, KaniMetadata};
+use kani_metadata::{ArtifactType, HarnessMetadata, KaniMetadata};
 use kani_queries::{QueryDb, ReachabilityType, UserInput};
 use rustc_codegen_ssa::traits::CodegenBackend;
 use rustc_codegen_ssa::{CodegenResults, CrateInfo};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_errors::ErrorGuaranteed;
 use rustc_hir::def::DefKind;
+use rustc_hir::def_id::LOCAL_CRATE;
 use rustc_metadata::EncodedMetadata;
 use rustc_middle::dep_graph::{WorkProduct, WorkProductId};
 use rustc_middle::mir::mono::{CodegenUnit, MonoItem};
@@ -162,12 +163,12 @@ impl CodegenBackend for GotocCodegenBackend {
             let outputs = tcx.output_filenames(());
             let base_filename = outputs.output_path(OutputType::Object);
             let pretty = self.queries.get_output_pretty_json();
-            write_file(&base_filename, KaniFileType::SymTab, &gcx.symbol_table, pretty);
-            write_file(&base_filename, KaniFileType::TypeMap, &type_map, pretty);
-            write_file(&base_filename, KaniFileType::Metadata, &metadata, pretty);
+            write_file(&base_filename, ArtifactType::SymTab, &gcx.symbol_table, pretty);
+            write_file(&base_filename, ArtifactType::TypeMap, &type_map, pretty);
+            write_file(&base_filename, ArtifactType::Metadata, &metadata, pretty);
             // If they exist, write out vtable virtual call function pointer restrictions
             if let Some(restrictions) = vtable_restrictions {
-                write_file(&base_filename, KaniFileType::VTableRestriction, &restrictions, pretty);
+                write_file(&base_filename, ArtifactType::VTableRestriction, &restrictions, pretty);
             }
             symbol_table_to_gotoc(&tcx, &base_filename);
         }
@@ -396,8 +397,8 @@ fn collect_codegen_items<'tcx>(gcx: &GotocCtx<'tcx>) -> Vec<MonoItem<'tcx>> {
 }
 
 fn symbol_table_to_gotoc(tcx: &TyCtxt, file: &Path) -> impl AsRef<Path> {
-    let output_filename = file.with_extension(KaniFileType::Goto);
-    let input_filename = file.with_extension(KaniFileType::SymTab);
+    let output_filename = file.with_extension(ArtifactType::SymTabGoto);
+    let input_filename = file.with_extension(ArtifactType::SymTab);
 
     let args = vec![
         input_filename.clone().into_os_string(),
@@ -466,7 +467,8 @@ fn dump_mir_items(tcx: TyCtxt, items: &[MonoItem]) {
 /// See <https://github.com/model-checking/kani/issues/1855> for more details.
 fn generate_metadata(gcx: &GotocCtx, tcx: TyCtxt) -> KaniMetadata {
     let outputs = tcx.output_filenames(());
-    let model_file = outputs.output_path(OutputType::Object).with_extension(KaniFileType::Goto);
+    let model_file =
+        outputs.output_path(OutputType::Object).with_extension(ArtifactType::SymTabGoto);
     let extend_harnesses = |mut harnesses: Vec<HarnessMetadata>| {
         for harness in harnesses.iter_mut() {
             harness.model_file = Some(model_file.clone());
@@ -474,13 +476,14 @@ fn generate_metadata(gcx: &GotocCtx, tcx: TyCtxt) -> KaniMetadata {
         harnesses
     };
     KaniMetadata {
+        crate_name: tcx.crate_name(LOCAL_CRATE).to_string(),
         proof_harnesses: extend_harnesses(gcx.proof_harnesses.clone()),
         unsupported_features: gcx.unsupported_metadata(),
         test_harnesses: extend_harnesses(gcx.test_harnesses.clone()),
     }
 }
 
-pub fn write_file<T>(base_path: &Path, file_type: KaniFileType, source: &T, pretty: bool)
+pub fn write_file<T>(base_path: &Path, file_type: ArtifactType, source: &T, pretty: bool)
 where
     T: serde::Serialize,
 {

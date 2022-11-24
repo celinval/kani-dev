@@ -104,6 +104,8 @@ impl KaniSession {
         let packages = packages_to_verify(&self.args, &metadata);
         for package in packages {
             for target in package_targets(&self.args, package) {
+                // TODO: Link function restrictions spec for legacy linker.
+                // collect_and_link_function_pointer_restrictions(source, &linked_restrictions)?;
                 let mut cmd = Command::new("cargo");
                 cmd.args(&cargo_args)
                     .args(vec!["-p", &package.name])

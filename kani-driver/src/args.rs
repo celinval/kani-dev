@@ -73,7 +73,7 @@ pub struct KaniArgs {
         case_insensitive = true,
     )]
     pub concrete_playback: Option<ConcretePlaybackMode>,
-    /// Keep temporary files generated throughout Kani process
+    /// Keep temporary files generated throughout Kani process. This is a no-op for `cargo-kani`.
     #[structopt(long, hidden_short_help(true))]
     pub keep_temps: bool,
 
@@ -101,8 +101,7 @@ pub struct KaniArgs {
     #[structopt(long, hidden_short_help(true), requires("enable-unstable"))]
     pub gen_c: bool,
 
-    // TODO: currently only cargo-kani pays attention to this.
-    /// Directory for all generated artifacts. Only effective when running Kani with cargo
+    /// Directory for all generated artifacts.
     #[structopt(long, parse(from_os_str))]
     pub target_dir: Option<PathBuf>,
 
@@ -391,6 +390,18 @@ impl CheckArgs {
 impl StandaloneArgs {
     pub fn validate(&self) {
         self.common_opts.validate();
+        self.valid_input().unwrap();
+    }
+
+    fn valid_input(&self) -> Result<(), Error> {
+        if !self.input.is_file() {
+            Err(Error::with_description(
+                "Invalid argument: Input invalid. `{}` is not a regular file.",
+                ErrorKind::InvalidValue,
+            ))
+        } else {
+            Ok(())
+        }
     }
 }
 impl CargoKaniArgs {
@@ -464,6 +475,14 @@ impl KaniArgs {
                 "Conflicting options: --jobs requires `--output-format=terse`",
                 ErrorKind::ArgumentConflict,
             ));
+        }
+        if let Some(out_dir) = &self.target_dir {
+            if out_dir.exists() && !out_dir.is_dir() {
+                return Err(Error::with_description(
+                    "Invalid argument: `--target-dir` argument `{}` is not a directory",
+                    ErrorKind::InvalidValue,
+                ));
+            }
         }
 
         Ok(())

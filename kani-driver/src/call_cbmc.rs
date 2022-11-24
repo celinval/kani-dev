@@ -295,6 +295,7 @@ mod tests {
     use structopt::StructOpt;
 
     use super::*;
+    use std::option::Option::None;
 
     #[test]
     fn check_resolve_unwind_value() {
@@ -305,8 +306,8 @@ mod tests {
         let args_both =
             ["kani", "--default-unwind", "2", "--unwind", "1", "--harness", "check_one"];
 
-        let harness_none = mock_proof_harness("check_one", None);
-        let harness_some = mock_proof_harness("check_one", Some(3));
+        let harness_none = mock_proof_harness("check_one", None, None);
+        let harness_some = mock_proof_harness("check_one", Some(3), None);
 
         // test against no unwind annotation
         assert_eq!(
