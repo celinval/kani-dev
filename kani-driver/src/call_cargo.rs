@@ -127,8 +127,8 @@ impl KaniSession {
             // mock an answer: mostly the same except we don't/can't expand the globs
             return Ok(CargoOutputs {
                 outdir: outdir.clone(),
-                symtabs: vec![outdir.join("*.symtab.json")],
-                metadata: vec![outdir.join("*.kani-metadata.json")],
+                symtabs: vec![outdir.join("mock_crate.symtab.json")],
+                metadata: vec![outdir.join("mock_crate.kani-metadata.json")],
                 restrictions: self.args.restrict_vtable().then_some(outdir),
             });
         }

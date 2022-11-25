@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use anyhow::{bail, Result};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use kani_metadata::{
     HarnessMetadata, InternedString, KaniMetadata, TraitDefinedMethod, VtableCtxResults,
@@ -105,24 +105,6 @@ pub fn merge_kani_metadata(files: Vec<KaniMetadata>) -> KaniMetadata {
 }
 
 impl KaniSession {
-    /// Reads a collection of kani-metadata.json files and merges the results.
-    pub fn collect_kani_metadata(&self, files: &[PathBuf]) -> Result<KaniMetadata> {
-        if self.args.dry_run {
-            // Mock an answer
-            Ok(KaniMetadata {
-                crate_name: String::from("mock_crate"),
-                proof_harnesses: vec![mock_proof_harness("harness", None, None)],
-                unsupported_features: vec![],
-                test_harnesses: vec![],
-            })
-        } else {
-            // TODO: one possible future improvement here would be to return some kind of Lazy
-            // value, that only computes this metadata if it turns out we need it.
-            let results: Result<Vec<_>, _> = files.iter().map(|x| from_json(x)).collect();
-            Ok(merge_kani_metadata(results?))
-        }
-    }
-
     /// Determine which function to use as entry point, based on command-line arguments and kani-metadata.
     pub fn determine_targets(
         &self,

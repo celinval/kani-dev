@@ -53,10 +53,8 @@ impl<'sess> HarnessRunner<'sess> {
                 .map(|harness| -> Result<HarnessResult<'a>> {
                     let harness_filename = harness.pretty_name.replace("::", "-");
                     let report_dir = self.project.outdir.join(format!("report-{harness_filename}"));
-                    let goto_file = self
-                        .project
-                        .get_crate_artifact(&harness.crate_name, ArtifactType::Goto)
-                        .unwrap();
+                    let goto_file =
+                        self.project.get_harness_artifact(&harness, ArtifactType::Goto).unwrap();
                     let specialized_obj = specialized_harness_name(goto_file, &harness_filename);
                     self.sess.record_temporary_files(&[&specialized_obj]);
                     self.sess.instrument_model(

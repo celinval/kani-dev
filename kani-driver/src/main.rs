@@ -77,7 +77,7 @@ fn standalone_main() -> Result<()> {
 fn verify_project(project: Project, session: KaniSession) -> Result<()> {
     let harnesses = session.determine_targets(&project.get_all_harnesses())?;
     debug!(?project, "verify_project");
-    debug!(?harnesses, "verify_project");
+    debug!(n = harnesses.len(), ?harnesses, "verify_project");
 
     // Verification
     let runner = harness_runner::HarnessRunner { sess: &session, project };

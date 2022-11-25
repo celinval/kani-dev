@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use comfy_table::Table;
-use kani_metadata::{ArtifactType, KaniMetadata};
+use kani_metadata::KaniMetadata;
 
 use crate::harness_runner::HarnessResult;
 use crate::metadata::merge_kani_metadata;
@@ -227,7 +227,7 @@ pub(crate) fn cargokani_assess_main(mut session: KaniSession) -> Result<()> {
 
     let project = project::cargo_project(&session)?;
 
-    let crate_count = project.get_artifacts(ArtifactType::Metadata).len();
+    let crate_count = project.metadata.len();
 
     // An interesting thing to print here would be "number of crates without any warnings"
     // however this will have to wait until a refactoring of how we aggregate metadata

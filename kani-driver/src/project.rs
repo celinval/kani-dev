@@ -1,6 +1,8 @@
 // Copyright Kani Contributors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 //! This module defines the structure for a Kani project.
+//! The goal is to provide one project view independent on the build system (cargo / standalone
+//! rustc) and its configuration (e.g.: linker type).
 
 use crate::metadata::{from_json, mock_proof_harness};
 use crate::session::KaniSession;
@@ -10,25 +12,32 @@ use kani_metadata::{ArtifactType, HarnessMetadata, KaniMetadata};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use tracing::debug;
+use tracing::{debug, trace};
 
 /// This structure represent the project information relevant for verification.
 /// For dry-run, this structure is populated with mock data.
+/// A `Project` contains information about all crates under verification, as well as all
+/// artifacts relevant for verification.
+///
+/// For one specific harness, there should be up to one artifact of each type. I.e., artifacts of
+/// the same type are linked as part of creating the project.
+///
+/// However, one artifact can be used for multiple harnesses. This will depend on the type of
+/// artifact, but it should be transparent for the user of this object.
 #[derive(Debug, Default)]
 pub struct Project {
+    /// Each target crate metadata.
+    pub metadata: Vec<KaniMetadata>,
     /// The directory where all outputs should be directed to.
     pub outdir: PathBuf,
     /// The collection of artifacts kept as part of this project.
-    pub artifacts: Vec<Artifact>,
-    /// Each target crate metadata.
-    pub metadata: Vec<KaniMetadata>,
+    artifacts: Vec<Artifact>,
 }
 
 impl Project {
-    pub fn get_artifacts(&self, typ: ArtifactType) -> Vec<Artifact> {
-        self.artifacts.iter().filter(|artifact| artifact.has_type(typ)).cloned().collect()
-    }
-
+    /// Get all harnesses from a project. This will include all test and proof harnesses.
+    /// We could create a `get_proof_harnesses` and a `get_tests_harnesses` later if we see the
+    /// need to split them.
     pub fn get_all_harnesses(&self) -> Vec<&HarnessMetadata> {
         self.metadata
             .iter()
@@ -38,41 +47,38 @@ impl Project {
             .collect()
     }
 
-    // TODO: Should we create a HarnessId instead of using metadata everywhere?
+    /// Return the matching artifact for the given harness.
+    /// If the harness has information about the model_file we can use that to find the exact file.
+    /// For cases where there is no model_file, we just assume that everything has been linked
+    /// together. I.e.: There should only be one artifact of the given type.
     pub fn get_harness_artifact(
         &self,
         harness: &HarnessMetadata,
         typ: ArtifactType,
     ) -> Option<&Artifact> {
+        trace!(?harness.model_file, "get_harness_artifact");
         self.artifacts.iter().find(|artifact| {
             artifact.has_type(typ)
-                && artifact.harness_mangled.as_ref() == Some(&harness.mangled_name)
+                && harness
+                    .model_file
+                    .as_ref()
+                    .map_or(true, |model_file| from_model(model_file, typ) == artifact.path)
         })
-    }
-
-    /// Return the matching artifact for the given crate_name. If more than one artifact is found,
-    /// this will return the first element.
-    pub fn get_crate_artifact(&self, crate_name: &String, typ: ArtifactType) -> Option<&Artifact> {
-        self.artifacts
-            .iter()
-            .find(|artifact| artifact.has_type(typ) && artifact.crate_name == *crate_name)
-    }
-
-    pub fn get_crate_artifacts(&self, crate_name: &String, typ: ArtifactType) -> Vec<&Artifact> {
-        self.artifacts
-            .iter()
-            .filter(|artifact| artifact.has_type(typ) && artifact.crate_name == *crate_name)
-            .collect()
     }
 }
 
-// Information about a build artifact.
+/// Create a path from the model path.
+/// The model path extension is `.symtab.out`, hence we have to strip the extension with two
+/// different calls to `with_extension`/`set_extension`.
+fn from_model(model_path: &Path, typ: ArtifactType) -> PathBuf {
+    let mut path = model_path.with_extension("");
+    path.set_extension(&typ);
+    path
+}
+
+/// Information about a build artifact.
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Artifact {
-    /// The name of the harness that this artifact is relative to a harness, if that's the case.
-    harness_mangled: Option<String>,
-    /// The name of the crate that originated this artifact.
-    crate_name: String,
     /// The path for this artifact.
     path: PathBuf,
     /// The type of artifact.
@@ -98,29 +104,23 @@ impl Artifact {
     }
 }
 
-fn cargo_artifact(metadata: &Path, crate_name: &str, typ: ArtifactType) -> Option<Artifact> {
+fn cargo_artifact(metadata: &Path, typ: ArtifactType, dry_run: bool) -> Option<Artifact> {
     let path = metadata.with_extension(&typ);
-    if path.exists() {
-        Some(Artifact { harness_mangled: None, crate_name: crate_name.to_string(), path, typ })
-    } else {
-        None
-    }
+    if path.exists() || dry_run { Some(Artifact { path, typ }) } else { None }
 }
 
 pub fn cargo_project(session: &KaniSession) -> Result<Project> {
     let outputs = session.cargo_build()?;
+    let dry_run = session.args.dry_run;
     let mut metadata = vec![];
     let mut artifacts = vec![];
-    if session.args.dry_run {
-        // Just fake a project and a call to the linker.
-        todo!()
-    } else if session.args.legacy_linker {
+    if (session.args.legacy_linker || session.args.function.is_some()) && !dry_run {
         // For the legacy linker or `--function` support, we still use a glob to link everything.
         // Yes, this is broken, but it has been broken for quite some time.
         todo!()
     } else {
         // For the MIR Linker we know there is only one artifact per verification target. Use
-        // that in our favor.
+        // that in our favor. This also covers the dry run mode.
         for meta_file in outputs.metadata {
             // Link the artifact.
             let base_path = meta_file.parent().unwrap().join(meta_file.file_stem().unwrap());
@@ -129,12 +129,11 @@ pub fn cargo_project(session: &KaniSession) -> Result<Project> {
             session.link_goto_binary(&[symtab_out], &goto)?;
 
             // Store project information.
-            let crate_metadata: KaniMetadata = from_json(&meta_file)?;
+            let crate_metadata: KaniMetadata =
+                if dry_run { dry_run_metadata("krate") } else { from_json(&meta_file)? };
             let crate_name = &crate_metadata.crate_name;
             artifacts.extend(
-                BUILD_ARTIFACTS
-                    .iter()
-                    .filter_map(|typ| cargo_artifact(&base_path, crate_name, *typ)),
+                BUILD_ARTIFACTS.iter().filter_map(|typ| cargo_artifact(&base_path, *typ, dry_run)),
             );
             debug!(?crate_name, ?crate_metadata, "cargo_project");
             metadata.push(crate_metadata);
@@ -210,6 +209,7 @@ impl<'a> StandaloneProjectBuilder<'a> {
         } else if metadata_path.exists() {
             self.metadata_with_function(from_json(metadata_path)?)
         } else {
+            // TODO: The compiler should still produce a metadata file even when no harness exists.
             KaniMetadata::default()
         };
 
@@ -240,7 +240,7 @@ impl<'a> StandaloneProjectBuilder<'a> {
 fn standalone_artifact(out_dir: &Path, crate_name: &String, typ: ArtifactType) -> Artifact {
     let mut path = out_dir.join(crate_name);
     let _ = path.set_extension(&typ);
-    Artifact { harness_mangled: None, crate_name: crate_name.clone(), path, typ }
+    Artifact { path, typ }
 }
 
 fn dry_run_metadata(crate_name: &str) -> KaniMetadata {
