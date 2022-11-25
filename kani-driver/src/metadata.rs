@@ -92,7 +92,7 @@ pub fn from_json<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T> {
 /// Consumes a vector of parsed metadata, and produces a combined structure
 /// TODO: We shouldn't be merging metadata files.
 pub fn merge_kani_metadata(files: Vec<KaniMetadata>) -> KaniMetadata {
-    let mut result = KaniMetadata::default();
+    let mut result = KaniMetadata { crate_name: "cbmc-linked".to_string(), ..Default::default() };
     for md in files {
         // Note that we're taking ownership of the original vec, and so we can move the data into the new data structure.
         result.proof_harnesses.extend(md.proof_harnesses);

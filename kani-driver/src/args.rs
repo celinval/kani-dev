@@ -98,7 +98,12 @@ pub struct KaniArgs {
 
     /// Generate C file equivalent to inputted program.
     /// This feature is unstable and it requires `--enable-unstable` to be used
-    #[structopt(long, hidden_short_help(true), requires("enable-unstable"))]
+    #[structopt(
+        long,
+        hidden_short_help(true),
+        requires("enable-unstable"),
+        conflicts_with_all(&["function", "legacy-linker"])
+    )]
     pub gen_c: bool,
 
     /// Directory for all generated artifacts.
