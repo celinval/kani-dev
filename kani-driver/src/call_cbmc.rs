@@ -295,7 +295,6 @@ mod tests {
     use structopt::StructOpt;
 
     use super::*;
-    use std::option::Option::None;
 
     #[test]
     fn check_resolve_unwind_value() {

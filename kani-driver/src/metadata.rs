@@ -13,7 +13,6 @@ use std::io::{BufReader, BufWriter};
 
 use crate::session::KaniSession;
 use serde::Deserialize;
-use std::option::Option::None;
 
 /// From either a file or a path with multiple files, output the CBMC restrictions file we should use.
 pub fn collect_and_link_function_pointer_restrictions(
@@ -90,7 +89,7 @@ pub fn from_json<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T> {
 }
 
 /// Consumes a vector of parsed metadata, and produces a combined structure
-/// TODO: We shouldn't be merging metadata files.
+/// TODO: We shouldn't be merging metadata files. This is used for `--function` and legacy linker.
 pub fn merge_kani_metadata(files: Vec<KaniMetadata>) -> KaniMetadata {
     let mut result = KaniMetadata { crate_name: "cbmc-linked".to_string(), ..Default::default() };
     for md in files {
@@ -193,7 +192,6 @@ fn find_proof_harness<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::option::Option::None;
 
     #[test]
     fn check_find_proof_harness() {
