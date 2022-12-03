@@ -3,20 +3,12 @@
 
 //! This file contains the code necessary to interface with the compiler backend
 
-use std::collections::BTreeMap;
-use std::ffi::OsString;
-use std::fmt::Write;
-use std::fs::File;
-use std::io::BufWriter;
-use std::io::Write as IoWrite;
-use std::iter::FromIterator;
-use std::path::Path;
-use std::process::Command;
-use std::rc::Rc;
-
+use crate::codegen_cprover_gotoc::GotocCtx;
+use crate::kani_middle::provide;
+use crate::kani_middle::reachability::{
+    collect_reachable_items, filter_closures_in_const_crate_items, filter_crate_items,
+};
 use bitflags::_core::any::Any;
-use tracing::{debug, error, warn};
-
 use cbmc::goto_program::Location;
 use cbmc::{InternedString, MachineModel};
 use kani_metadata::{ArtifactType, HarnessMetadata, KaniMetadata};
@@ -39,12 +31,17 @@ use rustc_session::Session;
 use rustc_span::def_id::DefId;
 use rustc_target::abi::Endian;
 use rustc_target::spec::PanicStrategy;
-
-use crate::codegen_cprover_gotoc::GotocCtx;
-use crate::kani_middle::mir_transform;
-use crate::kani_middle::reachability::{
-    collect_reachable_items, filter_closures_in_const_crate_items, filter_crate_items,
-};
+use std::collections::BTreeMap;
+use std::ffi::OsString;
+use std::fmt::Write;
+use std::fs::File;
+use std::io::BufWriter;
+use std::io::Write as IoWrite;
+use std::iter::FromIterator;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::rc::Rc;
+use tracing::{debug, error, warn};
 
 #[derive(Clone)]
 pub struct GotocCodegenBackend {
@@ -63,11 +60,11 @@ impl CodegenBackend for GotocCodegenBackend {
     }
 
     fn provide(&self, providers: &mut Providers) {
-        mir_transform::provide(providers);
+        provide::provide(providers, &self.queries);
     }
 
     fn provide_extern(&self, providers: &mut ty::query::ExternProviders) {
-        mir_transform::provide_extern(providers);
+        provide::provide_extern(providers);
     }
 
     fn codegen_crate(
@@ -140,10 +137,6 @@ impl CodegenBackend for GotocCodegenBackend {
 
         // Print compilation report.
         print_report(&gcx, tcx);
-
-        // perform post-processing symbol table passes
-        //let passes = self.queries.get_symbol_table_passes();
-        //let symtab = symtab_transformer::do_passes(gcx.symbol_table, &passes);
 
         // Map MIR types to GotoC types
         let type_map: BTreeMap<InternedString, InternedString> =
@@ -396,7 +389,7 @@ fn collect_codegen_items<'tcx>(gcx: &GotocCtx<'tcx>) -> Vec<MonoItem<'tcx>> {
     }
 }
 
-fn symbol_table_to_gotoc(tcx: &TyCtxt, file: &Path) -> impl AsRef<Path> {
+fn symbol_table_to_gotoc(tcx: &TyCtxt, file: &Path) -> PathBuf {
     let output_filename = file.with_extension(ArtifactType::SymTabGoto);
     let input_filename = file.with_extension(ArtifactType::SymTab);
 
@@ -471,7 +464,7 @@ fn generate_metadata(gcx: &GotocCtx, tcx: TyCtxt) -> KaniMetadata {
         outputs.output_path(OutputType::Object).with_extension(ArtifactType::SymTabGoto);
     let extend_harnesses = |mut harnesses: Vec<HarnessMetadata>| {
         for harness in harnesses.iter_mut() {
-            harness.model_file = Some(model_file.clone());
+            harness.goto_file = Some(model_file.clone());
         }
         harnesses
     };

@@ -104,8 +104,6 @@ impl KaniSession {
         let packages = packages_to_verify(&self.args, &metadata);
         for package in packages {
             for target in package_targets(&self.args, package) {
-                // TODO: Link function restrictions spec for legacy linker.
-                // collect_and_link_function_pointer_restrictions(source, &linked_restrictions)?;
                 let mut cmd = Command::new("cargo");
                 cmd.args(&cargo_args)
                     .args(vec!["-p", &package.name])
@@ -122,15 +120,6 @@ impl KaniSession {
 
         if !found_target {
             bail!("No supported targets were found.");
-        }
-        if self.args.dry_run {
-            // mock an answer: mostly the same except we don't/can't expand the globs
-            return Ok(CargoOutputs {
-                outdir: outdir.clone(),
-                symtabs: vec![outdir.join("mock_crate.symtab.json")],
-                metadata: vec![outdir.join("mock_crate.kani-metadata.json")],
-                restrictions: self.args.restrict_vtable().then_some(outdir),
-            });
         }
 
         Ok(CargoOutputs {

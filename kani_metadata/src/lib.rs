@@ -3,11 +3,11 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use artifact::*;
+pub use artifact::ArtifactType;
 pub use harness::*;
 pub use vtable::*;
 
-mod artifact;
+pub mod artifact;
 mod harness;
 mod vtable;
 

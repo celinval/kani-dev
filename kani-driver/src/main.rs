@@ -6,13 +6,13 @@
 use std::ffi::OsString;
 
 use anyhow::Result;
-use structopt::StructOpt;
 
 use args::CargoKaniSubcommand;
 use args_toml::join_args;
 
 use crate::project::{Project, StandaloneProjectBuilder};
 use crate::session::KaniSession;
+use clap::Parser;
 use tracing::debug;
 
 mod args;
@@ -49,7 +49,7 @@ fn main() -> Result<()> {
 /// The main function for the `cargo kani` command.
 fn cargokani_main(input_args: Vec<OsString>) -> Result<()> {
     let input_args = join_args(input_args)?;
-    let args = args::CargoKaniArgs::from_iter(input_args);
+    let args = args::CargoKaniArgs::parse_from(input_args);
     args.validate();
     let session = session::KaniSession::new(args.common_opts)?;
 
@@ -64,8 +64,7 @@ fn cargokani_main(input_args: Vec<OsString>) -> Result<()> {
 
 /// The main function for the `kani` command.
 fn standalone_main() -> Result<()> {
-    // Argument Processing
-    let args = args::StandaloneArgs::from_args();
+    let args = args::StandaloneArgs::parse();
     args.validate();
     let session = session::KaniSession::new(args.common_opts)?;
 
