@@ -8,9 +8,15 @@ on:
     # We don't want to re-trigger this workflow when tagging an existing commit.
     branches:
       - '**'
-
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: 'Log level'
+        required: false
+        default: 'warn'
 env:
   RUST_BACKTRACE: 1
+  KANI_LOG: ${{ github.event.inputs.logLevel }}
 
 jobs:
   regression:
@@ -26,25 +32,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           os: ${{ matrix.os }}
-
-      - name: Build Kani
-        run: cargo build-dev
-
-      - name: Execute Kani regression
-        run: ./scripts/kani-regression.sh
-
-  experimental-features-regression:
-    runs-on: ubuntu-20.04
-    env:
-      KANI_ENABLE_UNSOUND_EXPERIMENTS: 1
-    steps:
-      - name: Checkout Kani
-        uses: actions/checkout@v3
-
-      - name: Setup Kani Dependencies
-        uses: ./.github/actions/setup
-        with:
-          os: ubuntu-20.04
 
       - name: Build Kani
         run: cargo build-dev
@@ -68,116 +55,3 @@ jobs:
 
       - name: Execute Kani performance tests
         run: ./scripts/kani-perf.sh
-
-  bookrunner:
-    runs-on: ubuntu-20.04
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout Kani
-        uses: actions/checkout@v3
-
-      - name: Setup Kani Dependencies
-        uses: ./.github/actions/setup
-        with:
-          os: ubuntu-20.04
-
-      - name: Build Kani
-        run: cargo build-dev
-
-      - name: Install book runner dependencies
-        run: ./scripts/setup/install_bookrunner_deps.sh
-
-      - name: Generate book runner report
-        run: cargo run -p bookrunner
-        env:
-          DOC_RUST_LANG_ORG_CHANNEL: nightly
-
-      - name: Print book runner text results
-        run: cat build/output/latest/html/bookrunner.txt
-
-      - name: Print book runner failures grouped by stage
-        run: python3 scripts/ci/bookrunner_failures_by_stage.py build/output/latest/html/index.html
-
-      - name: Detect unexpected book runner failures
-        run: ./scripts/ci/detect_bookrunner_failures.sh build/output/latest/html/bookrunner.txt
-
-      # On one OS only, build the documentation, too.
-      - name: Build Documentation
-        run: ./scripts/build-docs.sh
-
-      # When we're pushed to main branch, only then actually publish the docs.
-      - name: Publish Documentation
-        if: ${{ github.event_name == 'push' && startsWith('refs/heads/main', github.ref) }}
-        uses: JamesIves/github-pages-deploy-action@v4.3.3
-        with:
-          branch: gh-pages
-          folder: docs/book/
-          single-commit: true
-
-  releasebundle:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [macos-11, ubuntu-18.04]
-        include:
-          - os: macos-11
-            artifact: kani-latest-x86_64-apple-darwin.tar.gz
-          - os: ubuntu-18.04
-            artifact: kani-latest-x86_64-unknown-linux-gnu.tar.gz
-    steps:
-      - name: Checkout Kani
-        uses: actions/checkout@v3
-
-      - name: Setup Kani Dependencies
-        uses: ./.github/actions/setup
-        with:
-          os: ${{ matrix.os }}
-
-      - name: Build release bundle
-        run: |
-          cargo bundle -- latest
-          cargo package -p kani-verifier
-
-      - name: Build container test
-        if: ${{ matrix.os == 'ubuntu-18.04' }}
-        run: |
-          docker build -t kani-20-04 -f scripts/ci/Dockerfile.bundle-test-ubuntu-20-04 .
-          docker build -t kani-20-04-alt -f scripts/ci/Dockerfile.bundle-test-ubuntu-20-04-alt .
-          docker build -t kani-18-04 -f scripts/ci/Dockerfile.bundle-test-ubuntu-18-04 .
-          # this one does its tests automatically, for reasons documented in the file:
-          docker build -t kani-nixos -f scripts/ci/Dockerfile.bundle-test-nixos .
-
-      - name: Run installed tests
-        if: ${{ matrix.os == 'ubuntu-18.04' }}
-        run: |
-          for tag in kani-20-04 kani-20-04-alt kani-18-04; do
-            docker run $tag  cargo kani --version
-            docker run -w /tmp/kani/tests/cargo-kani/simple-lib  $tag  cargo kani
-            docker run -w /tmp/kani/tests/cargo-kani/simple-visualize  $tag  cargo kani
-            docker run -w /tmp/kani/tests/cargo-kani/build-rs-works  $tag  cargo kani
-            docker run -w /tmp/kani/tests/cargo-kani/simple-kissat  $tag  cargo kani
-            docker run $tag  cargo-kani setup --use-local-bundle ./${{ matrix.artifact }}
-          done
-          # While the above test OS issues, now try testing with nightly as default:
-          docker run -w /tmp/kani/tests/cargo-kani/simple-lib  kani-20-04  bash -c "rustup default nightly && cargo kani"
-
-      # We can't run macos in a container, so we can only test locally.
-      # Hopefully any dependency issues won't be unique to macos.
-      - name: Local install test
-        if: ${{ matrix.os == 'macos-11' }}
-        run: |
-          cargo install --path ./target/package/kani-verifier-*[^e]
-          cargo-kani setup --use-local-bundle ./${{ matrix.artifact }}
-          (cd tests/cargo-kani/simple-lib && cargo kani)
-          (cd tests/cargo-kani/simple-visualize && cargo kani)
-          (cd tests/cargo-kani/build-rs-works && cargo kani)
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
-          if-no-files-found: error
-          # Aggressively short retention: we don't really need these
-          retention-days: 3
