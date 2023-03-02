@@ -268,6 +268,7 @@ impl<'test> TestCx<'test> {
         let function_name = self.testpaths.file.file_stem().unwrap().to_str().unwrap();
         cargo
             .arg("kani")
+            .arg("--debug")
             .arg("--target-dir")
             .arg(self.output_base_dir().join("target"))
             .current_dir(&parent_dir);
