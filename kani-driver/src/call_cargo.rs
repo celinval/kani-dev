@@ -306,7 +306,17 @@ fn map_kani_artifact(rustc_artifact: cargo_metadata::Artifact) -> Option<Artifac
             trace!(artifact=?path, "map_kani_artifact");
             let input_file = File::open(path).ok()?;
             let stub: CompilerArtifactStub = serde_json::from_reader(input_file).unwrap();
-            Artifact::try_new(&stub.metadata_path, ArtifactType::Metadata).ok()
+            Artifact::try_new(&stub.metadata_path, ArtifactType::Metadata).map_or_else(
+                |err| {
+                    println!(
+                        "error: {err}\n parent:{:?}\n contents:{:?}",
+                        path.parent(),
+                        fs::read_dir(path.parent().unwrap())
+                    );
+                    None
+                },
+                Some,
+            )
         }
     });
     debug!(?result, "map_kani_artifact");
