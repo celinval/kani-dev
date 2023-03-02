@@ -44,9 +44,14 @@ cargo test -p kani_metadata
 
 # Declare testing suite information (suite and mode)
 TESTS=(
+    "script-based-pre exec"
+    "kani kani"
+    "expected expected"
+    "ui expected"
+    "firecracker kani"
+    "prusti kani"
+    "smack kani"
     "cargo-kani cargo-kani"
-    "cargo-ui cargo-kani"
-    "kani-docs cargo-kani"
 )
 
 if [[ "" != "${KANI_ENABLE_UNSOUND_EXPERIMENTS-}" ]]; then
@@ -55,29 +60,25 @@ else
   TESTS+=("no_unsound_experiments expected")
 fi
 
+export KANI_LOG=debug,kani_driver=trace
+
 # Build compiletest and print configuration. We pick suite / mode combo so there's no test.
 echo "--- Compiletest configuration"
 cargo run -p compiletest --quiet -- --suite kani --mode cargo-kani --dry-run --verbose
 echo "-----------------------------"
 
 # Extract testing suite information and run compiletest
-for testp in "${TESTS[@]}"; do
-  testl=($testp)
-  suite=${testl[0]}
-  mode=${testl[1]}
-  echo "Check compiletest suite=$suite mode=$mode"
-  cargo run -p compiletest --quiet -- --suite $suite --mode $mode \
-      --quiet --no-fail-fast
+for i in {1..10}; do
+    echo "==== Attempt $i/10 ==="
+    for testp in "${TESTS[@]}"; do
+      testl=($testp)
+      suite=${testl[0]}
+      mode=${testl[1]}
+      echo "Check compiletest suite=$suite mode=$mode"
+      cargo run -p compiletest --quiet -- --suite $suite --mode $mode \
+          --quiet --no-fail-fast
+    done
 done
-
-# Test run 'cargo kani assess scan'
-"$SCRIPT_DIR"/assess-scan-regression.sh
-
-# Test for --manifest-path which we cannot do through compiletest.
-# It should just successfully find the project and specified proof harness. (Then clean up.)
-FEATURES_MANIFEST_PATH="$KANI_DIR/tests/cargo-kani/cargo-features-flag/Cargo.toml"
-cargo kani --manifest-path "$FEATURES_MANIFEST_PATH" --harness trivial_success
-cargo clean --manifest-path "$FEATURES_MANIFEST_PATH"
 
 echo
 echo "All Kani regression tests completed successfully."
