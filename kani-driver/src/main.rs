@@ -69,7 +69,7 @@ fn cargokani_main(input_args: Vec<OsString>) -> Result<()> {
         return assess::run_assess(session, assess::AssessArgs::default());
     }
 
-    let project = project::cargo_project(&session)?;
+    let project = project::cargo_project(&session, false)?;
     if session.args.only_codegen { Ok(()) } else { verify_project(project, session) }
 }
 

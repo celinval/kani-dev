@@ -4,6 +4,7 @@
 use crate::args::KaniArgs;
 use crate::call_single_file::to_rustc_arg;
 use crate::session::KaniSession;
+use crate::util;
 use anyhow::{bail, Context, Result};
 use cargo_metadata::diagnostic::{Diagnostic, DiagnosticLevel};
 use cargo_metadata::{Message, Metadata, MetadataCommand, Package};
@@ -37,11 +38,13 @@ pub struct CargoOutputs {
     pub metadata: Vec<PathBuf>,
     /// Recording the cargo metadata from the build
     pub cargo_metadata: Metadata,
+    /// For build `keep_building` mode, we collect the targets that we failed to compile.
+    pub failed_targets: Option<Vec<String>>,
 }
 
 impl KaniSession {
     /// Calls `cargo_build` to generate `*.symtab.json` files in `target_dir`
-    pub fn cargo_build(&self) -> Result<CargoOutputs> {
+    pub fn cargo_build(&self, keep_going: bool) -> Result<CargoOutputs> {
         let build_target = env!("TARGET"); // see build.rs
         let metadata = self.cargo_metadata(build_target)?;
         let target_dir = self
@@ -105,6 +108,7 @@ impl KaniSession {
 
         let mut found_target = false;
         let packages = packages_to_verify(&self.args, &metadata);
+        let mut failed_targets = vec![];
         for package in packages {
             for target in package_targets(&self.args, package) {
                 let mut cmd = Command::new("cargo");
@@ -118,7 +122,15 @@ impl KaniSession {
                     .env("CARGO_ENCODED_RUSTFLAGS", rustc_args.join(OsStr::new("\x1f")))
                     .env("CARGO_TERM_PROGRESS_WHEN", "never");
 
-                self.run_cargo(cmd)?;
+                if let Err(err) = self.run_cargo(cmd) {
+                    if keep_going {
+                        let target_str = format!("{} {target:?}", package.name);
+                        util::error(&format!("Failed to compile {target_str}"));
+                        failed_targets.push(target_str);
+                    } else {
+                        return Err(err);
+                    }
+                }
                 found_target = true;
             }
         }
@@ -133,6 +145,7 @@ impl KaniSession {
             metadata: glob(&outdir.join("*.kani-metadata.json"))?,
             restrictions: self.args.restrict_vtable().then_some(outdir),
             cargo_metadata: metadata,
+            failed_targets: keep_going.then_some(failed_targets),
         })
     }
 
@@ -277,6 +290,7 @@ fn packages_to_verify<'b>(args: &KaniArgs, metadata: &'b Metadata) -> Vec<&'b Pa
 }
 
 /// Possible verification targets.
+#[derive(Debug)]
 enum VerificationTarget {
     Bin(String),
     Lib,
