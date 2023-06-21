@@ -59,8 +59,9 @@ fn main() -> ExitCode {
 /// The main function for the `cargo kani` command.
 fn cargokani_main(input_args: Vec<OsString>) -> Result<()> {
     let input_args = join_args(input_args)?;
-    let args = args::CargoKaniArgs::parse_from(input_args);
+    let mut args = args::CargoKaniArgs::parse_from(input_args);
     check_is_valid(&args);
+    args.verify_opts.restrict_vtable = true;
     let session = session::KaniSession::new(args.verify_opts)?;
 
     match args.command {
@@ -83,13 +84,14 @@ fn cargokani_main(input_args: Vec<OsString>) -> Result<()> {
 
 /// The main function for the `kani` command.
 fn standalone_main() -> Result<()> {
-    let args = args::StandaloneArgs::parse();
+    let mut args = args::StandaloneArgs::parse();
     check_is_valid(&args);
 
     if let Some(StandaloneSubcommand::Playback(args)) = args.command {
         return playback_standalone(*args);
     }
 
+    args.verify_opts.restrict_vtable = true;
     let session = session::KaniSession::new(args.verify_opts)?;
     let project = project::standalone_project(&args.input.unwrap(), &session)?;
     if session.args.only_codegen { Ok(()) } else { verify_project(project, session) }
