@@ -1,0 +1,10 @@
+Checking harness check_foo...
+- Status: SATISFIED\
+- Description: "Concrete1::foo"
+
+- Status: SATISFIED\
+- Description: "Concrete2::foo"
+
+2 of 2 cover properties satisfied
+
+VERIFICATION:- SUCCESSFUL
