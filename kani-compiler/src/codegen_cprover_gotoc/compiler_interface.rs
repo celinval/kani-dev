@@ -55,6 +55,8 @@ use std::iter::FromIterator;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::thread::JoinHandle;
 use std::time::Instant;
 use tempfile::Builder as TempFileBuilder;
 use tracing::{debug, error, info};
@@ -73,15 +75,116 @@ impl GotocCodegenBackend {
     pub fn new(queries: Arc<Mutex<QueryDb>>) -> Self {
         GotocCodegenBackend { queries }
     }
+}
+
+/// Implement the code generation stage.
+/// This is a short lived object that allows us to safely parallelize some work.
+struct GotocCodegenImpl {
+    writer_thread: Option<JoinHandle<()>>,
+    queries: QueryDb,
+}
+
+impl Drop for GotocCodegenImpl {
+    fn drop(&mut self) {
+        if let Some(writer_thread) = self.writer_thread.take() {
+            if let Err(e) = writer_thread.join() {
+                error!(error=?e, "GotocCodegen::drop");
+            }
+        }
+    }
+}
+
+impl GotocCodegenImpl {
+    pub fn new(queries: QueryDb) -> Self {
+        GotocCodegenImpl { writer_thread: None, queries }
+    }
+
+    pub fn codegen_crate<'tcx>(
+        &mut self,
+        tcx: TyCtxt<'tcx>,
+        base_filename: &Path,
+    ) -> GotoCodegenResults<'tcx> {
+        let reachability = self.queries.reachability_analysis;
+        let mut results = GotoCodegenResults::new(tcx, reachability);
+        match reachability {
+            ReachabilityType::Harnesses => {
+                // Cross-crate collecting of all items that are reachable from the crate harnesses.
+                let harnesses = self.queries.target_harnesses();
+                let mut items: HashSet<DefPathHash> = HashSet::with_capacity(harnesses.len());
+                items.extend(harnesses.into_iter());
+                let harnesses =
+                    filter_crate_items(tcx, |_, def_id| items.contains(&tcx.def_path_hash(def_id)));
+                for harness in harnesses {
+                    let model_path = self
+                        .queries
+                        .harness_model_path(&tcx.def_path_hash(harness.def_id()))
+                        .unwrap()
+                        .clone();
+                    let (unsupported, concurrent, items) =
+                        self.codegen_items(tcx, &[harness], &model_path, &results.machine_model);
+                    results.extend(unsupported, concurrent, items, None);
+                }
+            }
+            ReachabilityType::Tests => {
+                // We're iterating over crate items here, so what we have to codegen is the "test description" containing the
+                // test closure that we want to execute
+                // TODO: Refactor this code so we can guarantee that the pair (test_fn, test_desc) actually match.
+                let mut descriptions = vec![];
+                let harnesses = filter_const_crate_items(tcx, |_, def_id| {
+                    if is_test_harness_description(tcx, def_id) {
+                        descriptions.push(def_id);
+                        true
+                    } else {
+                        false
+                    }
+                });
+                // Codegen still takes a considerable amount, thus, we only generate one model for
+                // all harnesses and copy them for each harness.
+                // We will be able to remove this once we optimize all calls to CBMC utilities.
+                // https://github.com/model-checking/kani/issues/1971
+                let model_path = base_filename.with_extension(ArtifactType::SymTabGoto);
+                let (unsupported, concurrent, items) =
+                    self.codegen_items(tcx, &harnesses, &model_path, &results.machine_model);
+                results.extend(unsupported, concurrent, items, None);
+
+                for (test_fn, test_desc) in harnesses.iter().zip(descriptions.iter()) {
+                    let instance =
+                        if let MonoItem::Fn(instance) = test_fn { instance } else { continue };
+                    let metadata = gen_test_metadata(tcx, *test_desc, *instance, &base_filename);
+                    let test_model_path = &metadata.goto_file.as_ref().unwrap();
+                    std::fs::copy(&model_path, &test_model_path).expect(&format!(
+                        "Failed to copy {} to {}",
+                        model_path.display(),
+                        test_model_path.display()
+                    ));
+                    results.harnesses.push(metadata);
+                }
+            }
+            ReachabilityType::None => {}
+            ReachabilityType::PubFns => {
+                let entry_fn = tcx.entry_fn(()).map(|(id, _)| id);
+                let local_reachable = filter_crate_items(tcx, |_, def_id| {
+                    (tcx.is_reachable_non_generic(def_id) && tcx.def_kind(def_id).is_fn_like())
+                        || entry_fn == Some(def_id)
+                });
+                let model_path = base_filename.with_extension(ArtifactType::SymTabGoto);
+                let (unsupported, concurrent, items) =
+                    self.codegen_items(tcx, &local_reachable, &model_path, &results.machine_model);
+                results.extend(unsupported, concurrent, items, None);
+            }
+        }
+        self.join_thread();
+        results
+    }
 
     /// Generate code that is reachable from the given starting points.
     fn codegen_items<'tcx>(
-        &self,
+        &mut self,
         tcx: TyCtxt<'tcx>,
         starting_items: &[MonoItem<'tcx>],
         symtab_goto: &Path,
         machine_model: &MachineModel,
-    ) -> (GotocCtx<'tcx>, Vec<MonoItem<'tcx>>) {
+    ) -> (UnsupportedConstructs, UnsupportedConstructs, Vec<MonoItem<'tcx>>) {
         let items = with_timer(
             || collect_reachable_items(tcx, starting_items),
             "codegen reachability analysis",
@@ -90,7 +193,7 @@ impl GotocCodegenBackend {
 
         // Follow rustc naming convention (cx is abbrev for context).
         // https://rustc-dev-guide.rust-lang.org/conventions.html#naming-conventions
-        let mut gcx = GotocCtx::new(tcx, (*self.queries.lock().unwrap()).clone(), machine_model);
+        let mut gcx = GotocCtx::new(tcx, self.queries.clone(), machine_model);
         check_reachable_items(gcx.tcx, &gcx.queries, &items);
 
         with_timer(
@@ -147,39 +250,67 @@ impl GotocCodegenBackend {
             "codegen",
         );
 
-        // Map from name to prettyName for all symbols
-        let pretty_name_map: BTreeMap<InternedString, Option<InternedString>> =
-            BTreeMap::from_iter(gcx.symbol_table.iter().map(|(k, s)| (*k, s.pretty_name)));
+        let unsupported = UnsupportedConstructs::from_iter(gcx.unsupported_constructs.drain());
+        let concurrent = UnsupportedConstructs::from_iter(gcx.concurrent_constructs.drain());
+        self.write_result(tcx, gcx, symtab_goto.to_path_buf());
 
-        // Map MIR types to GotoC types
-        let type_map: BTreeMap<InternedString, InternedString> =
-            BTreeMap::from_iter(gcx.type_map.iter().map(|(k, v)| (*k, v.to_string().into())));
+        (unsupported, concurrent, items)
+    }
 
-        // Get the vtable function pointer restrictions if requested
-        let vtable_restrictions = if gcx.vtable_ctx.emit_vtable_restrictions {
-            Some(gcx.vtable_ctx.get_virtual_function_restrictions())
-        } else {
-            None
-        };
-
-        // No output should be generated if user selected no_codegen.
+    fn write_result(&mut self, tcx: TyCtxt, mut gcx: GotocCtx, symtab_goto: PathBuf) {
         if !tcx.sess.opts.unstable_opts.no_codegen && tcx.sess.opts.output_types.should_codegen() {
-            let pretty = self.queries.lock().unwrap().output_pretty_json;
-            write_file(&symtab_goto, ArtifactType::PrettyNameMap, &pretty_name_map, pretty);
-            if gcx.queries.write_json_symtab {
-                write_file(&symtab_goto, ArtifactType::SymTab, &gcx.symbol_table, pretty);
-                symbol_table_to_gotoc(&tcx, &symtab_goto);
-            } else {
-                write_goto_binary_file(symtab_goto, &gcx.symbol_table);
-            }
-            write_file(&symtab_goto, ArtifactType::TypeMap, &type_map, pretty);
-            // If they exist, write out vtable virtual call function pointer restrictions
-            if let Some(restrictions) = vtable_restrictions {
-                write_file(&symtab_goto, ArtifactType::VTableRestriction, &restrictions, pretty);
-            }
-        }
+            let pretty = self.queries.output_pretty_json;
+            let write_json_symtab = self.queries.write_json_symtab;
 
-        (gcx, items)
+            // Move all the relevant structures out of gcx since GotocCtx is not thread safe.
+            // Objects with `'tcx` lifecycle do not implementing `Send + Sync` automatically.
+            let vtable_restrictions = if gcx.vtable_ctx.emit_vtable_restrictions {
+                Some(gcx.vtable_ctx.get_virtual_function_restrictions())
+            } else {
+                None
+            };
+
+            // Map MIR types to GotoC types
+            let type_map: BTreeMap<InternedString, InternedString> =
+                BTreeMap::from_iter(gcx.type_map.iter().map(|(k, v)| (*k, v.to_string().into())));
+            let symbol_table = gcx.symbol_table;
+
+            self.join_thread();
+            self.writer_thread = Some(thread::spawn(move || {
+                // Get the vtable function pointer restrictions if requested
+
+                // Map from name to prettyName for all symbols
+                let pretty_name_map: BTreeMap<InternedString, Option<InternedString>> =
+                    BTreeMap::from_iter(symbol_table.iter().map(|(k, s)| (*k, s.pretty_name)));
+                // No output should be generated if user selected no_codegen.
+                write_file(&symtab_goto, ArtifactType::PrettyNameMap, &pretty_name_map, pretty);
+                if write_json_symtab {
+                    write_file(&symtab_goto, ArtifactType::SymTab, &symbol_table, pretty);
+                    symbol_table_to_gotoc(&symtab_goto);
+                } else {
+                    with_timer(
+                        || write_goto_binary_file(&symtab_goto, &symbol_table),
+                        "write_goto",
+                    );
+                }
+                write_file(&symtab_goto, ArtifactType::TypeMap, &type_map, pretty);
+                // If they exist, write out vtable virtual call function pointer restrictions
+                if let Some(restrictions) = vtable_restrictions {
+                    write_file(
+                        &symtab_goto,
+                        ArtifactType::VTableRestriction,
+                        &restrictions,
+                        pretty,
+                    );
+                }
+            }));
+        }
+    }
+
+    fn join_thread(&mut self) {
+        if let Some(writer_thread) = self.writer_thread.take() {
+            writer_thread.join().expect("artifact writer failed");
+        }
     }
 }
 
@@ -225,73 +356,9 @@ impl CodegenBackend for GotocCodegenBackend {
         // - PubFns: Generate code for all reachable logic starting from the local public functions.
         // - None: Don't generate code. This is used to compile dependencies.
         let base_filename = tcx.output_filenames(()).output_path(OutputType::Object);
+        let mut codegen = GotocCodegenImpl::new(queries.clone());
+        let results = codegen.codegen_crate(tcx, &base_filename);
         let reachability = queries.reachability_analysis;
-        let mut results = GotoCodegenResults::new(tcx, reachability);
-        match reachability {
-            ReachabilityType::Harnesses => {
-                // Cross-crate collecting of all items that are reachable from the crate harnesses.
-                let harnesses = queries.target_harnesses();
-                let mut items: HashSet<DefPathHash> = HashSet::with_capacity(harnesses.len());
-                items.extend(harnesses.into_iter());
-                let harnesses =
-                    filter_crate_items(tcx, |_, def_id| items.contains(&tcx.def_path_hash(def_id)));
-                for harness in harnesses {
-                    let model_path =
-                        queries.harness_model_path(&tcx.def_path_hash(harness.def_id())).unwrap();
-                    let (gcx, items) =
-                        self.codegen_items(tcx, &[harness], model_path, &results.machine_model);
-                    results.extend(gcx, items, None);
-                }
-            }
-            ReachabilityType::Tests => {
-                // We're iterating over crate items here, so what we have to codegen is the "test description" containing the
-                // test closure that we want to execute
-                // TODO: Refactor this code so we can guarantee that the pair (test_fn, test_desc) actually match.
-                let mut descriptions = vec![];
-                let harnesses = filter_const_crate_items(tcx, |_, def_id| {
-                    if is_test_harness_description(tcx, def_id) {
-                        descriptions.push(def_id);
-                        true
-                    } else {
-                        false
-                    }
-                });
-                // Codegen still takes a considerable amount, thus, we only generate one model for
-                // all harnesses and copy them for each harness.
-                // We will be able to remove this once we optimize all calls to CBMC utilities.
-                // https://github.com/model-checking/kani/issues/1971
-                let model_path = base_filename.with_extension(ArtifactType::SymTabGoto);
-                let (gcx, items) =
-                    self.codegen_items(tcx, &harnesses, &model_path, &results.machine_model);
-                results.extend(gcx, items, None);
-
-                for (test_fn, test_desc) in harnesses.iter().zip(descriptions.iter()) {
-                    let instance =
-                        if let MonoItem::Fn(instance) = test_fn { instance } else { continue };
-                    let metadata = gen_test_metadata(tcx, *test_desc, *instance, &base_filename);
-                    let test_model_path = &metadata.goto_file.as_ref().unwrap();
-                    std::fs::copy(&model_path, &test_model_path).expect(&format!(
-                        "Failed to copy {} to {}",
-                        model_path.display(),
-                        test_model_path.display()
-                    ));
-                    results.harnesses.push(metadata);
-                }
-            }
-            ReachabilityType::None => {}
-            ReachabilityType::PubFns => {
-                let entry_fn = tcx.entry_fn(()).map(|(id, _)| id);
-                let local_reachable = filter_crate_items(tcx, |_, def_id| {
-                    (tcx.is_reachable_non_generic(def_id) && tcx.def_kind(def_id).is_fn_like())
-                        || entry_fn == Some(def_id)
-                });
-                let model_path = base_filename.with_extension(ArtifactType::SymTabGoto);
-                let (gcx, items) =
-                    self.codegen_items(tcx, &local_reachable, &model_path, &results.machine_model);
-                results.extend(gcx, items, None);
-            }
-        }
-
         if reachability != ReachabilityType::None {
             // Print compilation report.
             results.print_report(tcx);
@@ -454,7 +521,7 @@ fn codegen_results(
     ))
 }
 
-fn symbol_table_to_gotoc(tcx: &TyCtxt, base_path: &Path) -> PathBuf {
+fn symbol_table_to_gotoc(base_path: &Path) -> PathBuf {
     let output_filename = base_path.to_path_buf();
     let input_filename = convert_type(base_path, ArtifactType::SymTabGoto, ArtifactType::SymTab);
 
@@ -478,12 +545,10 @@ fn symbol_table_to_gotoc(tcx: &TyCtxt, base_path: &Path) -> PathBuf {
     if !result.status.success() {
         error!("Symtab error output:\n{}", String::from_utf8_lossy(&result.stderr));
         error!("Symtab output:\n{}", String::from_utf8_lossy(&result.stdout));
-        let err_msg = format!(
+        panic!(
             "Failed to generate goto model:\n\tsymtab2gb failed on file {}.",
             input_filename.display()
         );
-        tcx.sess.err(&err_msg);
-        tcx.sess.abort_if_errors();
     };
     output_filename
 }
@@ -563,14 +628,15 @@ impl<'tcx> GotoCodegenResults<'tcx> {
 
     fn extend(
         &mut self,
-        gcx: GotocCtx,
+        unsupported_constructs: UnsupportedConstructs,
+        concurrent_constructs: UnsupportedConstructs,
         items: Vec<MonoItem<'tcx>>,
         metadata: Option<HarnessMetadata>,
     ) {
         let mut items = items;
         self.harnesses.extend(metadata.into_iter());
-        self.concurrent_constructs.extend(gcx.concurrent_constructs.into_iter());
-        self.unsupported_constructs.extend(gcx.unsupported_constructs.into_iter());
+        self.concurrent_constructs.extend(concurrent_constructs.into_iter());
+        self.unsupported_constructs.extend(unsupported_constructs.into_iter());
         self.items.append(&mut items);
     }
 
