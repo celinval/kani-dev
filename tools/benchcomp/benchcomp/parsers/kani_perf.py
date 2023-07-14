@@ -69,7 +69,14 @@ def get_metrics():
 
 def main(root_dir):
     benchmarks = {}
-    test_out_dir = root_dir / "build" / "tests" / "perf"
+    test_dir = os.path.join(root_dir, "build", "tests")
+    test_out_dirs = list(pathlib.Path(test_dir).glob("kani_perf_run_*"))
+    if len(test_out_dirs) == 0:
+        raise Exception("[error] No result folder was found")
+    elif len(test_out_dirs) > 1:
+        raise Exception(f"[error] Found too many performance results. "
+                        f"Found:\n - {test_out_dirs}")
+    test_out_dir = test_out_dirs[0]
     harness_pat = re.compile(r"Checking harness (?P<name>.+)\.\.\.")
 
     metrics = _get_metrics()
