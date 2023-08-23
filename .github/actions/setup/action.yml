@@ -25,8 +25,7 @@ runs:
         shell: bash
 
       - name: Install Rust toolchain
-        run: cd ${{ inputs.kani_dir }} && ./scripts/setup/install_rustup.sh
-        shell: bash
+        uses: actions-rs/toolchain@v1
 
       - name: Update submodules
         run: |
