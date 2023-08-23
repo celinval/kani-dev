@@ -189,8 +189,6 @@ jobs:
 
   releasebundle-ubuntu:
     runs-on: ubuntu-20.04
-    container:
-      image: ubuntu:18.04
     steps:
       # This is required before checkout because the container does not
       # have Git installed, so cannot run checkout action. The checkout
