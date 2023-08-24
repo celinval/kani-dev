@@ -1,0 +1,36 @@
+# Copyright Kani Contributors
+# SPDX-License-Identifier: Apache-2.0 OR MIT
+name: Setup Kani Dependencies (Ubuntu 18)
+inputs:
+  kani_dir:
+    description: Path to Kani's root directory
+    required: false
+    default: '.'
+runs:
+  using: composite
+  steps:
+    - name: Free up docker disk space
+      shell: bash
+      run: |
+        # inspired by https://github.com/easimon/maximize-build-space/blob/master/action.yml
+        df -h
+        rm -r /mnt/host-local/lib/android /mnt/host-local/.ghcup
+        df -h
+    # This is required before checkout because the container does not
+    # have Git installed, so cannot run checkout action. The checkout
+    # action requires Git >=2.18, so use the Git maintainers' PPA.
+    - name: Install system dependencies
+      shell: bash
+      run: |
+        apt-get update
+        apt-get install -y software-properties-common apt-utils
+        add-apt-repository ppa:git-core/ppa
+        apt-get update
+        apt-get install -y \
+          build-essential bash-completion curl lsb-release sudo g++ gcc flex \
+          bison make patch git
+
+    - name: Setup Kani Dependencies
+      uses: ./.github/actions/setup
+      with:
+        os: ubuntu-18.04

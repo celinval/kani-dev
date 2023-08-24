@@ -13,11 +13,15 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  ReleaseBundle-MacOs:
+  release_bundle_macos:
     name: ReleaseBundle-MacOs
     runs-on: macos-12
     permissions:
       contents: write
+    outputs:
+      version: ${{ env.VERSION }}
+      bundle: ${{ env.BUNDLE }}
+      package: ${{ env.PKG }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -26,6 +30,10 @@ jobs:
         uses: ./.github/actions/setup
         with:
           os: macos-12
+
+      - name: Export crate version
+        run: |
+          echo "CRATE_VERSION=$(cargo pkgid | cut -d@ -f2)" >> $GITHUB_ENV
 
       - name: Export tag version
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
@@ -40,13 +48,13 @@ jobs:
       - name: Build bundle
         run: |
           cargo bundle -- ${{ env.VERSION }}
-          cargo package -p kani-verifier
-          cp target/package/kani-verifier*.crate macos-kani-verifier.crate
-
-      - name: Export variables
-        run: |
           echo "BUNDLE=kani-${{ env.VERSION }}-x86_64-apple-darwin.tar.gz" >> $GITHUB_ENV
-          echo "bundle=${{ env.BUNDLE }}" >> $GITHUB_OUTPUT
+
+      - name: Build package
+        run: |
+          cargo package -p kani-verifier
+          mv target/package/kani-verifier-${{ env.CRATE_VERSION }}.crate macos-kani-verifier.crate
+          echo "PKG=macos-kani-verifier.crate" >> $GITHUB_ENV
 
       - name: Upload bundle
         uses: actions/upload-artifact@v3
@@ -60,32 +68,44 @@ jobs:
       - name: Upload kani-verifier pkg
         uses: actions/upload-artifact@v3
         with:
-          name: macos-kani-verifier.crate
-          path: macos-kani-verifier.crate
+          name: ${{ env.PKG }}
+          path: ${{ env.PKG }}
           if-no-files-found: error
           # Aggressively short retention: we don't really need these
           retention-days: 3
 
-  TestBundle-MacOs:
+  test_bundle_macos:
     name: TestBundle-MacOs
-    needs: ReleaseBundle-MacOs
+    needs: release_bundle_macos
     runs-on: macos-12
+    env:
+      VERSION: ${{ needs.release_bundle_macos.outputs.version }}
+      PKG: ${{ needs.release_bundle_macos.outputs.package }}
+      BUNDLE: ${{ needs.release_bundle_macos.outputs.bundle }}
     steps:
       - name: Download bundle
         uses: actions/download-artifact@v3
         with:
-          name: ${{ needs.ReleaseBundle-MacOs.outputs.bundle }}
+          name: ${{ env.BUNDLE }}
+
+      - name: Check download
+        run: |
+          ls -lh .
 
       - name: Download kani-verifier crate
         uses: actions/download-artifact@v3
         with:
-          name: macos-kani-verifier.crate
+          name: ${{ env.PKG }}
+
+      - name: Check download
+        run: |
+          ls -lh .
 
       - name: Install from bundle
         run: |
-          tar xf macos-kani-verifier.crate
+          tar zxvf ${{ env.PKG }}
           cargo install --locked kani-verifier-*
-          cargo kani setup --use-local-bundle ./${{ needs.ReleaseBundle-MacOs.outputs.bundle }}
+          cargo kani setup --use-local-bundle ./${{ env.BUNDLE }}
 
       - name: Checkout tests
         uses: actions/checkout@v3
@@ -99,7 +119,7 @@ jobs:
           cargo kani
 
 
-  ReleaseBundle-Linux:
+  release_bundle_linux:
     name: ReleaseBundle-Linux
     runs-on: ubuntu-20.04
     container:
@@ -108,32 +128,12 @@ jobs:
       volumes:
         - /usr/local:/mnt/host-local
     steps:
-      - name: Remove unnecessary software to free up disk space
-        run: |
-          # inspired by https://github.com/easimon/maximize-build-space/blob/master/action.yml
-          df -h
-          rm -r /mnt/host-local/lib/android /mnt/host-local/.ghcup
-          df -h
-      # This is required before checkout because the container does not
-      # have Git installed, so cannot run checkout action. The checkout
-      # action requires Git >=2.18, so use the Git maintainers' PPA.
-      - name: Install system dependencies
-        run: |
-          apt-get update
-          apt-get install -y software-properties-common apt-utils
-          add-apt-repository ppa:git-core/ppa
-          apt-get update
-          apt-get install -y \
-            build-essential bash-completion curl lsb-release sudo g++ gcc flex \
-            bison make patch git
 
       - name: Checkout Kani
         uses: actions/checkout@v3
 
       - name: Setup Kani Dependencies
-        uses: ./.github/actions/setup
-        with:
-          os: ubuntu-18.04
+        uses: ./.github/actions/setup-ubuntu-18
 
       - name: Export tag version
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
@@ -150,6 +150,7 @@ jobs:
           PATH=/github/home/.cargo/bin:$PATH cargo bundle -- ${{ env.VERSION }}
           PATH=/github/home/.cargo/bin:$PATH cargo package -p kani-verifier
           cp target/package/kani-verifier*.crate linux-kani-verifier.crate
+          echo "BUNDLE=kani-${{ env.VERSION }}-x86_64-unknown-linux-gnu.tar.gz" >> $GITHUB_ENV
 
       - name: Upload bundle
         uses: actions/upload-artifact@v3
@@ -169,11 +170,11 @@ jobs:
           # Aggressively short retention: we don't really need these
           retention-days: 3
 
-  TestBundle-Linux:
+  test_bundle_linux:
     # TODO: Maybe run a matrix for each image...
     # Note that we need to change how the bundle upload the crate or maybe just make part of this job.
     name: TestBundle-Linux
-    needs: ReleaseBundle-Linux
+    needs: release_bundle_linux
     runs-on: ubuntu-20.04
     steps:
       - name: TODO
@@ -181,11 +182,11 @@ jobs:
           echo "TODO"
           exit 1
 
-  Release:
+  kani_release:
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     name: Release
     runs-on: ubuntu-20.04
-    needs: [ReleaseBundle-MacOs, ReleaseBundle-Linux, TestBundle-MacOs, TestBundle-Linux]
+    needs: [release_bundle_macos, release_bundle_linux, test_bundle_macos, test_bundle_linux]
     permissions:
       contents: write
     outputs:
@@ -214,12 +215,12 @@ jobs:
       - name: Download MacOS bundle
         uses: actions/download-artifact@v3
         with:
-          name: ${{ needs.ReleaseBundle-MacOs.outputs.bundle }}
+          name: ${{ needs.release_bundle_macos.outputs.bundle }}
 
       - name: Download Linux bundle
         uses: actions/download-artifact@v3
         with:
-          name: ${{ needs.ReleaseBundle-Linux.outputs.bundle }}
+          name: ${{ needs.release_bundle_linux.outputs.bundle }}
 
       - name: Create release
         id: create_release
@@ -235,9 +236,9 @@ jobs:
           draft: true
 
   # TODO: Why do we need this?
-  Package-Docker:
-    name: 'Package Docker'
-    needs: Release
+  package_docker:
+    name: Package Docker
+    needs: kani_release
     runs-on: ubuntu-20.04
     permissions:
       contents: write
@@ -280,11 +281,11 @@ jobs:
           push: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
           tags: |
-            ghcr.io/${{ env.OWNER_LC }}/kani-${{ env.os }}:${{ needs.Release.outputs.version }}
+            ghcr.io/${{ env.OWNER_LC }}/kani-${{ env.os }}:${{ needs.kani_release.outputs.version }}
             ghcr.io/${{ env.OWNER_LC }}/kani-${{ env.os }}:latest
           labels: |
             org.opencontainers.image.source=${{ github.repositoryUrl }}
-            org.opencontainers.image.version=${{ needs.Release.outputs.version }}
+            org.opencontainers.image.version=${{ needs.kani_release.outputs.version }}
             org.opencontainers.image.licenses=Apache-2.0 OR MIT
 
       # This check will not work until #1655 is completed.
