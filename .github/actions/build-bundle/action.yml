@@ -1,0 +1,75 @@
+# Copyright Kani Contributors
+# SPDX-License-Identifier: Apache-2.0 OR MIT
+name: Build bundle
+inputs:
+  arch:
+    description: "Current architecture tuple"
+  os:
+    description: "Current operating system"
+outputs:
+  version:
+    value: ${{ env.VERSION }}
+  bundle:
+    value: ${{ env.BUNDLE }}
+  package:
+    value: ${{ env.PKG }}
+runs:
+  using: composite
+  steps:
+    - name: Export crate version
+      shell: bash
+      run: |
+        echo "CRATE_VERSION=$(cargo pkgid | cut -d@ -f2)" >> $GITHUB_ENV
+
+    - name: Export tag version
+      shell: bash
+      if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+      run: |
+        echo "VERSION=${TAG_VERSION}" >> $GITHUB_ENV
+
+    - name: Check Version
+      shell: bash
+      if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+      run: |
+        # Validate git tag & Cargo.toml are in sync on version number
+        if [[ ${{ env.CRATE_VERSION }} != ${{ env.TAG_VERSION }} ]]; then
+          echo "Git tag ${{env.TAG_VERSION}} did not match crate version ${{env.CRATE_VERSION}}"
+          exit 1
+        fi
+
+    - name: Export latest version
+      shell: bash
+      if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+      run: |
+        echo "VERSION=latest" >> $GITHUB_ENV
+
+    - name: Build bundle
+      shell: bash
+      run: |
+        cargo bundle -- ${{ env.VERSION }}
+        echo "BUNDLE=kani-${{ env.VERSION }}-${{ inputs.arch }}.tar.gz" >> $GITHUB_ENV
+
+    - name: Build package
+      shell: bash
+      run: |
+        cargo package -p kani-verifier
+        mv target/package/kani-verifier-${{ env.CRATE_VERSION }}.crate ${{ inputs.os }}-kani-verifier.crate
+        echo "PKG=${{ inputs.os }}-kani-verifier.crate" >> $GITHUB_ENV
+
+    - name: Upload bundle
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ env.BUNDLE }}
+        path: ${{ env.BUNDLE }}
+        if-no-files-found: error
+        # Aggressively short retention: we don't really need these
+        retention-days: 3
+
+    - name: Upload kani-verifier pkg
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ env.PKG }}
+        path: ${{ env.PKG }}
+        if-no-files-found: error
+        # Aggressively short retention: we don't really need these
+        retention-days: 3

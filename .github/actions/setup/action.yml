@@ -32,6 +32,7 @@ runs:
       - name: Update submodules
         run: |
           cd ${{ inputs.kani_dir }}
+          ls -a
           git config --global --add safe.directory $(pwd)
           git submodule update --init --depth 1
         shell: bash

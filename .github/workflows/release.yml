@@ -19,9 +19,9 @@ jobs:
     permissions:
       contents: write
     outputs:
-      version: ${{ env.VERSION }}
-      bundle: ${{ env.BUNDLE }}
-      package: ${{ env.PKG }}
+      version: ${{ steps.bundle.outputs.version }}
+      bundle: ${{ steps.bundle.outputs.bundle }}
+      package: ${{ steps.bundle.outputs.package }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -31,48 +31,50 @@ jobs:
         with:
           os: macos-12
 
-      - name: Export crate version
-        run: |
-          echo "CRATE_VERSION=$(cargo pkgid | cut -d@ -f2)" >> $GITHUB_ENV
+      - name: Build bundle
+        id: bundle
+        uses: ./.github/actions/build-bundle
+        with:
+          os: macos-11
+          arch: x86_64-apple-darwin
 
-      - name: Export tag version
-        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+      - name: Check output
         run: |
-          echo "VERSION=${TAG_VERSION}" >> $GITHUB_ENV
+          echo "version: ${{ steps.bundle.outputs.version }}"
+          echo "bundle: ${{ steps.bundle.outputs.bundle }}"
+          echo "package: ${{ steps.bundle.outputs.package }}"
 
-      - name: Export latest version
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: |
-          echo "VERSION=latest" >> $GITHUB_ENV
+  release_bundle_linux:
+    name: ReleaseBundle-Linux
+    runs-on: ubuntu-20.04
+    outputs:
+      version: ${{ steps.bundle.outputs.version }}
+      bundle: ${{ steps.bundle.outputs.bundle }}
+      package: ${{ steps.bundle.outputs.package }}
+    container:
+      # Build using ubuntu 18 due to compatibility issues with older OS.
+      image: ubuntu:18.04
+      volumes:
+        - /usr/local:/mnt/host-local
+    steps:
+
+      - name: Setup Docker
+        uses: ./.github/actions/setup-ubuntu-18
+
+      - name: Checkout Kani
+        uses: actions/checkout@v3
+
+      - name: Setup Kani Dependencies
+        uses: ./.github/actions/setup
+        with:
+          os: ubuntu-18.04
 
       - name: Build bundle
-        run: |
-          cargo bundle -- ${{ env.VERSION }}
-          echo "BUNDLE=kani-${{ env.VERSION }}-x86_64-apple-darwin.tar.gz" >> $GITHUB_ENV
-
-      - name: Build package
-        run: |
-          cargo package -p kani-verifier
-          mv target/package/kani-verifier-${{ env.CRATE_VERSION }}.crate macos-kani-verifier.crate
-          echo "PKG=macos-kani-verifier.crate" >> $GITHUB_ENV
-
-      - name: Upload bundle
-        uses: actions/upload-artifact@v3
+        id: bundle
+        uses: ./.github/actions/build-bundle
         with:
-          name: ${{ env.BUNDLE }}
-          path: ${{ env.BUNDLE }}
-          if-no-files-found: error
-          # Aggressively short retention: we don't really need these
-          retention-days: 3
-
-      - name: Upload kani-verifier pkg
-        uses: actions/upload-artifact@v3
-        with:
-          name: ${{ env.PKG }}
-          path: ${{ env.PKG }}
-          if-no-files-found: error
-          # Aggressively short retention: we don't really need these
-          retention-days: 3
+          os: linux
+          arch: x86_64-unknown-linux-gnu
 
   test_bundle_macos:
     name: TestBundle-MacOs
@@ -88,10 +90,6 @@ jobs:
         with:
           name: ${{ env.BUNDLE }}
 
-      - name: Check download
-        run: |
-          ls -lh .
-
       - name: Download kani-verifier crate
         uses: actions/download-artifact@v3
         with:
@@ -104,7 +102,7 @@ jobs:
       - name: Install from bundle
         run: |
           tar zxvf ${{ env.PKG }}
-          cargo install --locked kani-verifier-*
+          cargo install --locked --path kani-verifier-*
           cargo kani setup --use-local-bundle ./${{ env.BUNDLE }}
 
       - name: Checkout tests
@@ -117,58 +115,6 @@ jobs:
         run: |
           pushd kani_src/tests/cargo_kani/simple-lib
           cargo kani
-
-
-  release_bundle_linux:
-    name: ReleaseBundle-Linux
-    runs-on: ubuntu-20.04
-    container:
-      # Build using ubuntu 18 due to compatibility issues with older OS.
-      image: ubuntu:18.04
-      volumes:
-        - /usr/local:/mnt/host-local
-    steps:
-
-      - name: Checkout Kani
-        uses: actions/checkout@v3
-
-      - name: Setup Kani Dependencies
-        uses: ./.github/actions/setup-ubuntu-18
-
-      - name: Export tag version
-        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
-        run: |
-          echo "VERSION=${TAG_VERSION}" >> $GITHUB_ENV
-
-      - name: Export latest version
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: |
-          echo "VERSION=latest" >> $GITHUB_ENV
-
-      - name: Build bundle
-        run: |
-          PATH=/github/home/.cargo/bin:$PATH cargo bundle -- ${{ env.VERSION }}
-          PATH=/github/home/.cargo/bin:$PATH cargo package -p kani-verifier
-          cp target/package/kani-verifier*.crate linux-kani-verifier.crate
-          echo "BUNDLE=kani-${{ env.VERSION }}-x86_64-unknown-linux-gnu.tar.gz" >> $GITHUB_ENV
-
-      - name: Upload bundle
-        uses: actions/upload-artifact@v3
-        with:
-          name: ${{ env.BUNDLE }}
-          path: ${{ env.BUNDLE }}
-          if-no-files-found: error
-          # Aggressively short retention: we don't really need these
-          retention-days: 3
-
-      - name: Upload kani-verifier pkg
-        uses: actions/upload-artifact@v3
-        with:
-          name: linux-kani-verifier.crate
-          path: linux-kani-verifier.crate
-          if-no-files-found: error
-          # Aggressively short retention: we don't really need these
-          retention-days: 3
 
   test_bundle_linux:
     # TODO: Maybe run a matrix for each image...
