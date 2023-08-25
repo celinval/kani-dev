@@ -46,20 +46,18 @@ runs:
     - name: Build bundle
       shell: bash
       run: |
-        #cargo bundle -- ${{ env.VERSION }}
+        cargo bundle -- ${{ env.VERSION }}
         echo "BUNDLE=kani-${{ env.VERSION }}-${{ inputs.arch }}.tar.gz" >> $GITHUB_ENV
 
     - name: Build package
       shell: bash
       run: |
-        #cargo package -p kani-verifier
-        #mv target/package/kani-verifier-${{ env.CRATE_VERSION }}.crate ${{ inputs.os }}-kani-verifier.crate
+        cargo package -p kani-verifier
+        mv target/package/kani-verifier-${{ env.CRATE_VERSION }}.crate ${{ inputs.os }}-kani-verifier.crate
         echo "PKG=${{ inputs.os }}-kani-verifier.crate" >> $GITHUB_ENV
 
     - name: Upload bundle
       uses: actions/upload-artifact@v3
-      # TODO: REMOVE-ME
-      if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
       with:
         name: ${{ env.BUNDLE }}
         path: ${{ env.BUNDLE }}
@@ -69,8 +67,6 @@ runs:
 
     - name: Upload kani-verifier pkg
       uses: actions/upload-artifact@v3
-      # TODO: REMOVE-ME
-      if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
       with:
         name: ${{ env.PKG }}
         path: ${{ env.PKG }}
@@ -82,9 +78,6 @@ runs:
       shell: bash
       id: set_output
       run: |
-        echo "version: ${{ env.VERSION }}"
-        echo "bundle: ${{ env.BUNDLE }}"
-        echo "package: ${{ env.PKG }}"
         echo "version=${{ env.VERSION }}" >> ${GITHUB_OUTPUT}
         echo "bundle=${{ env.BUNDLE }}" >> ${GITHUB_OUTPUT}
         echo "package=${{ env.PKG }}" >> ${GITHUB_OUTPUT}
