@@ -21,16 +21,17 @@ runs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/local/.ghcup
           df -h
 
-      - name: Check cargo
-        run: |
-          cargo --version
-
       - name: Install Rust toolchain
         run: |
           cd ${{ inputs.kani_dir }} 
           ./scripts/setup/install_rustup.sh
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
         shell: bash
+
+      - name: Check cargo
+        shell: bash
+        run: |
+          cargo --version
 
       - name: Install dependencies
         run: cd ${{ inputs.kani_dir }} && ./scripts/setup/${{ inputs.os }}/install_deps.sh
