@@ -52,11 +52,31 @@ jobs:
         - /usr/local:/mnt/host-local
     steps:
 
+      - name: Free up docker disk space
+        run: |
+          # inspired by https://github.com/easimon/maximize-build-space/blob/master/action.yml
+          df -h
+          rm -r /mnt/host-local/lib/android /mnt/host-local/.ghcup
+          df -h
+
+      # This is required before checkout because the container does not
+      # have Git installed, so cannot run checkout action. The checkout
+      # action requires Git >=2.18, so use the Git maintainers' PPA.
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y software-properties-common apt-utils
+          add-apt-repository ppa:git-core/ppa
+          apt-get update
+          apt-get install -y \
+            build-essential bash-completion curl lsb-release sudo g++ gcc flex \
+            bison make patch git
+          curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused -fsSL \
+            https://get.docker.com -o /tmp/install-docker.sh
+          bash /tmp/install-docker.sh
+
       - name: Checkout Kani
         uses: actions/checkout@v3
-
-      - name: Setup Docker
-        uses: ./.github/actions/setup-ubuntu-18
 
       - name: Setup Kani Dependencies
         uses: ./.github/actions/setup
