@@ -125,8 +125,7 @@ jobs:
       - name: Run tests
         # TODO: Customize compiletest to run custom kani. For now, just run a cargo kani test.
         run: |
-          ls
-          pushd tests/cargo_kani/simple-lib
+          pushd tests/cargo-kani/simple-lib
           cargo kani
 
   test_bundle_linux:
