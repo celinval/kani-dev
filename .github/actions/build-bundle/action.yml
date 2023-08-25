@@ -8,11 +8,11 @@ inputs:
     description: "Current operating system"
 outputs:
   version:
-    value: ${{ env.VERSION }}
+    value: ${{ steps.set_output.outputs.version }}
   bundle:
-    value: ${{ env.BUNDLE }}
+    value: ${{ steps.set_output.outputs.bundle }}
   package:
-    value: ${{ env.PKG }}
+    value: ${{ steps.set_output.outputs.package }}
 runs:
   using: composite
   steps:
@@ -77,3 +77,14 @@ runs:
         if-no-files-found: error
         # Aggressively short retention: we don't really need these
         retention-days: 3
+
+    - name: Export output
+      shell: bash
+      id: set_output
+      run: |
+        echo "version: ${{ env.VERSION }}"
+        echo "bundle: ${{ env.BUNDLE }}"
+        echo "package: ${{ env.PKG }}"
+        echo "version=${{ env.VERSION }}" >> ${GITHUB_OUTPUT}
+        echo "bundle=${{ env.BUNDLE }}" >> ${GITHUB_OUTPUT}
+        echo "package=${{ env.PKG }}" >> ${GITHUB_OUTPUT}

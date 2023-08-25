@@ -60,11 +60,11 @@ jobs:
         - /usr/local:/mnt/host-local
     steps:
 
-      - name: Setup Docker
-        uses: ./.github/actions/setup-ubuntu-18
-
       - name: Checkout Kani
         uses: actions/checkout@v3
+
+      - name: Setup Docker
+        uses: ./.github/actions/setup-ubuntu-18
 
       - name: Setup Kani Dependencies
         uses: ./.github/actions/setup
