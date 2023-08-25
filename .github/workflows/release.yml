@@ -121,13 +121,12 @@ jobs:
 
       - name: Checkout tests
         uses: actions/checkout@v3
-        with:
-          path: kani_src
 
       - name: Run tests
         # TODO: Customize compiletest to run custom kani. For now, just run a cargo kani test.
         run: |
-          pushd kani_src/tests/cargo_kani/simple-lib
+          ls
+          pushd tests/cargo_kani/simple-lib
           cargo kani
 
   test_bundle_linux:
