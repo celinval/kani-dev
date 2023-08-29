@@ -35,7 +35,7 @@ jobs:
         id: bundle
         uses: ./.github/actions/build-bundle
         with:
-          os: macos-11
+          os: macos-12
           arch: x86_64-apple-darwin
 
   release_bundle_linux:
@@ -90,10 +90,18 @@ jobs:
           os: linux
           arch: x86_64-unknown-linux-gnu
 
-  test_bundle_macos:
-    name: TestBundle-MacOs
-    needs: release_bundle_macos
-    runs-on: macos-12
+  test_bundle:
+    name: TestBundle
+    needs: [release_bundle_macos, release_bundle_linux]
+    strategy:
+      matrix:
+        os: [macos-12, ubuntu-20.04, ubuntu-22.04]
+        include:
+          # Stores the output of the previous job conditional to the OS
+          - prev_job: ${{ needs.release_bundle_linux.outputs }}
+          - os: macos-12
+            prev_job: ${{ needs.release_bundle_macos.outputs }}
+    runs-on: ${{ matrix.os }}
     env:
       VERSION: ${{ needs.release_bundle_macos.outputs.version }}
       PKG: ${{ needs.release_bundle_macos.outputs.package }}
@@ -102,12 +110,12 @@ jobs:
       - name: Download bundle
         uses: actions/download-artifact@v3
         with:
-          name: ${{ env.BUNDLE }}
+          name: ${{ matrix.prev_job.bundle }}
 
       - name: Download kani-verifier crate
         uses: actions/download-artifact@v3
         with:
-          name: ${{ env.PKG }}
+          name: ${{ matrix.prev_job.package }}
 
       - name: Check download
         run: |
@@ -115,9 +123,9 @@ jobs:
 
       - name: Install from bundle
         run: |
-          tar zxvf ${{ env.PKG }}
+          tar zxvf ${{ matrix.prev_job.package }}
           cargo install --locked --path kani-verifier-*
-          cargo kani setup --use-local-bundle ./${{ env.BUNDLE }}
+          cargo kani setup --use-local-bundle ./${{ matrix.prev_job.bundle }}
 
       - name: Checkout tests
         uses: actions/checkout@v3
@@ -144,7 +152,7 @@ jobs:
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     name: Release
     runs-on: ubuntu-20.04
-    needs: [release_bundle_macos, release_bundle_linux, test_bundle_macos, test_bundle_linux]
+    needs: [release_bundle_macos, release_bundle_linux, test_bundle]
     permissions:
       contents: write
     outputs:
@@ -188,7 +196,7 @@ jobs:
         with:
           name: kani-${{ env.TAG_VERSION }}
           tag: kani-${{ env.TAG_VERSION }}
-          artifacts: "${{ needs.ReleaseBundle-Linux.outputs.bundle }},${{ needs.ReleaseBundle-MacOs.outputs.bundle }}"
+          artifacts: "${{ needs.release_bundle_linux.outputs.bundle }},${{ needs.release_bundle_macos.outputs.bundle }}"
           body: |
             Kani Rust verifier release bundle version ${{ env.TAG_VERSION }}.
           draft: true
