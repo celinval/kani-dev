@@ -10,9 +10,7 @@ on:
   push:
     # Run on changes to branches but not tags.
     branches:
-      # ORIGINAL
-      # - '**'
-      - 'main'
+      - '**'
 
 jobs:
   audit:

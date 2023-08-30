@@ -9,10 +9,16 @@ inputs:
     description: "Current operating system"
 outputs:
   version:
+    description: "The bundle version (latest or =crate_version)"
     value: ${{ steps.set_output.outputs.version }}
+  crate_version:
+    description: "The current crate version"
+    value: ${{ steps.set_output.outputs.crate_version }}
   bundle:
+    description: "The bundle file name"
     value: ${{ steps.set_output.outputs.bundle }}
   package:
+    description: "The package file name"
     value: ${{ steps.set_output.outputs.package }}
 runs:
   using: composite
@@ -80,5 +86,6 @@ runs:
       id: set_output
       run: |
         echo "version=${{ env.VERSION }}" >> ${GITHUB_OUTPUT}
+        echo "crate_version=${{ env.CRATE_VERSION }}" >> ${GITHUB_OUTPUT}
         echo "bundle=${{ env.BUNDLE }}" >> ${GITHUB_OUTPUT}
         echo "package=${{ env.PKG }}" >> ${GITHUB_OUTPUT}
