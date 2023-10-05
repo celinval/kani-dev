@@ -39,6 +39,9 @@ jobs:
     needs: auto-label
     if: contains(needs.auto-label.outputs.all-labels, 'Z-BenchCI')
     steps:
+      - name: Checkout Kani
+        uses: actions/checkout@v3
+
       - name: Trigger Benchmarks
         uses: ./.github/workflows/bench.yml
         with:
