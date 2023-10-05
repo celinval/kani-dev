@@ -13,6 +13,7 @@
 //!   - For every static, collect initializer and drop functions.
 //!
 //! We have kept this module agnostic of any Kani code in case we can contribute this back to rustc.
+use rustc_span::ErrorGuaranteed;
 use tracing::{debug, debug_span, trace, warn};
 
 use rustc_data_structures::fingerprint::Fingerprint;
@@ -21,11 +22,12 @@ use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_hir::ItemId;
-use rustc_middle::mir::interpret::{AllocId, ConstValue, ErrorHandled, GlobalAlloc, Scalar};
+use rustc_middle::mir::interpret::{AllocId, ErrorHandled, GlobalAlloc, Scalar};
 use rustc_middle::mir::mono::MonoItem;
 use rustc_middle::mir::visit::Visitor as MirVisitor;
 use rustc_middle::mir::{
-    Body, CastKind, Constant, ConstantKind, Location, Rvalue, Terminator, TerminatorKind,
+    Body, CastKind, Const, ConstOperand, ConstValue, Location, Rvalue, Terminator, TerminatorKind,
+    UnevaluatedConst,
 };
 use rustc_middle::span_bug;
 use rustc_middle::ty::adjustment::PointerCoercion;
@@ -320,7 +322,7 @@ impl<'a, 'tcx> MonoItemsFnCollector<'a, 'tcx> {
             ConstValue::Scalar(Scalar::Ptr(ptr, _size)) => {
                 self.collected.extend(collect_alloc_items(self.tcx, ptr.provenance).iter());
             }
-            ConstValue::Slice { data: alloc, start: _, end: _ } => {
+            ConstValue::Slice { data: alloc, .. } => {
                 for id in alloc.inner().provenance().provenances() {
                     self.collected.extend(collect_alloc_items(self.tcx, id).iter())
                 }
@@ -433,12 +435,12 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
     }
 
     /// Collect constants that are represented as static variables.
-    fn visit_constant(&mut self, constant: &Constant<'tcx>, location: Location) {
-        let literal = self.monomorphize(constant.literal);
-        debug!(?constant, ?location, ?literal, "visit_constant");
-        let val = match literal {
-            ConstantKind::Val(const_val, _) => const_val,
-            ConstantKind::Ty(ct) => match ct.kind() {
+    fn visit_constant(&mut self, constant: &ConstOperand<'tcx>, location: Location) {
+        let const_ = self.monomorphize(constant.const_);
+        debug!(?constant, ?location, ?const_, "visit_constant");
+        let val = match const_ {
+            Const::Val(const_val, _) => const_val,
+            Const::Ty(ct) => match ct.kind() {
                 ConstKind::Value(v) => self.tcx.valtree_to_const_val((ct.ty(), v)),
                 ConstKind::Unevaluated(_) => unreachable!(),
                 // Nothing to do
@@ -452,13 +454,29 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
                     unreachable!("Unexpected constant type {:?} ({:?})", ct, ct.kind())
                 }
             },
-            ConstantKind::Unevaluated(un_eval, _) => {
+            Const::Unevaluated(un_eval, _) => {
                 // Thread local fall into this category.
                 match self.tcx.const_eval_resolve(ParamEnv::reveal_all(), un_eval, None) {
                     // The `monomorphize` call should have evaluated that constant already.
                     Ok(const_val) => const_val,
                     Err(ErrorHandled::TooGeneric(span)) => {
-                        span_bug!(span, "Unexpected polymorphic constant: {:?}", literal)
+                        if graceful_const_resolution_err(
+                            self.tcx,
+                            &un_eval,
+                            span,
+                            self.instance.def_id(),
+                        )
+                        .is_some()
+                        {
+                            return;
+                        } else {
+                            span_bug!(
+                                span,
+                                "Unexpected polymorphic constant: {:?} {:?}",
+                                const_,
+                                constant.const_
+                            )
+                        }
                     }
                     Err(error) => {
                         warn!(?error, "Error already reported");
@@ -494,6 +512,12 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
                                 // implement the same traits as those in the
                                 // original function/method. A trait mismatch shows
                                 // up here, when we try to resolve a trait method
+
+                                // FIXME: This assumes the type resolving the
+                                // trait is the first argument, but that isn't
+                                // necessarily true. It could be any argument or
+                                // even the return type, for instance for a
+                                // trait like `FromIterator`.
                                 let generic_ty = outer_args[0].ty(self.body, tcx).peel_refs();
                                 let receiver_ty = tcx.subst_and_normalize_erasing_regions(
                                     substs,
@@ -508,7 +532,7 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
                                         "`{receiver_ty}` doesn't implement \
                                         `{trait_}`. The function `{caller}` \
                                         cannot be stubbed by `{}` due to \
-                                        generic bounds not being met.",
+                                        generic bounds not being met. Callee: {callee}",
                                         tcx.def_path_str(stub)
                                     ),
                                 );
@@ -553,6 +577,36 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MonoItemsFnCollector<'a, 'tcx> {
 
         self.super_terminator(terminator, location);
     }
+}
+
+/// Try to construct a nice error message when const evaluation fails.
+///
+/// This function handles the `Trt::CNST` case where there is one trait (`Trt`)
+/// which defined a constant `CNST` that we failed to resolve. As such we expect
+/// that the trait can be resolved from the constant and that only one generic
+/// parameter, the instantiation of `Trt`, is present.
+///
+/// If these expectations are not met we return `None`. We do not know in what
+/// situation that would be the case and if they are even possible.
+fn graceful_const_resolution_err<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    mono_const: &UnevaluatedConst<'tcx>,
+    span: rustc_span::Span,
+    parent_fn: DefId,
+) -> Option<ErrorGuaranteed> {
+    let implementor = match mono_const.args.as_slice() {
+        [one] => one.as_type(),
+        _ => None,
+    }?;
+    let trait_ = tcx.trait_of_item(mono_const.def)?;
+    let msg = format!(
+        "Type `{implementor}` does not implement trait `{}`. \
+        This is likely because `{}` is used as a stub but its \
+        generic bounds are not being met.",
+        tcx.def_path_str(trait_),
+        tcx.def_path_str(parent_fn)
+    );
+    Some(tcx.sess.span_err(span, msg))
 }
 
 /// Convert a `MonoItem` into a stable `Fingerprint` which can be used as a stable hash across
@@ -671,7 +725,7 @@ mod debug {
                 debug!(?target, "dump_dot");
                 let outputs = tcx.output_filenames(());
                 let path = outputs.output_path(OutputType::Metadata).with_extension("dot");
-                let out_file = File::create(&path)?;
+                let out_file = File::create(path)?;
                 let mut writer = BufWriter::new(out_file);
                 writeln!(writer, "digraph ReachabilityGraph {{")?;
                 if target.is_empty() {
