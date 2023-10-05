@@ -37,10 +37,10 @@ jobs:
     permissions: {}
     runs-on: ubuntu-latest
     needs: auto-label
+    if: contains(needs.auto-label.outputs.all-labels, 'Z-BenchCI')
     steps:
-      name: Trigger Benchmarks
-      if: contains(needs.auto-label.outputs.all-labels, 'Z-BenchCI')
-      uses: ./.github/workflows/bench.yml
-      with:
-        base: ${{ github.event.pull_request.base.sha }}
-        head: ${{ github.event.pull_request.head.sha }}
+      - name: Trigger Benchmarks
+        uses: ./.github/workflows/bench.yml
+        with:
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
