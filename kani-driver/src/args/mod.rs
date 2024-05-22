@@ -415,7 +415,8 @@ pub struct CheckArgs {
 
 impl CheckArgs {
     pub fn memory_safety_on(&self) -> bool {
-        !self.no_default_checks && !self.no_memory_safety_checks || self.memory_safety_checks
+        // Just to test the performance impact of these checks.
+        false
     }
     pub fn overflow_on(&self) -> bool {
         !self.no_default_checks && !self.no_overflow_checks || self.overflow_checks
