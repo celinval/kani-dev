@@ -225,6 +225,14 @@ impl KaniSession {
                 // Minisat is currently CBMC's default solver, so no need to
                 // pass any arguments
             }
+            CbmcSolver::Z3 => {
+                args.push("--incremental-smt2-solver".into());
+                args.push("z3 --smt2 -in".into());
+            }
+            CbmcSolver::CVC5 => {
+                args.push("--incremental-smt2-solver".into());
+                args.push("cvc5 --smt2 -in".into());
+            }
             CbmcSolver::Binary(solver_binary) => {
                 // Check if the specified binary exists in path
                 if which::which(solver_binary).is_err() {

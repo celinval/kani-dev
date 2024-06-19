@@ -19,6 +19,12 @@ pub enum CbmcSolver {
     /// MiniSAT (CBMC's default solver)
     Minisat,
 
+    /// Use the SMT solver Z3
+    Z3,
+
+    /// Use the SMT solver CVC5
+    CVC5,
+
     /// A solver binary variant whose argument gets passed to
     /// `--external-sat-solver`. The specified binary must exist in path.
     #[strum(disabled, serialize = "bin=<SAT_SOLVER_BINARY>")]
