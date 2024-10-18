@@ -1246,6 +1246,8 @@ impl GotocCtx<'_> {
     /// This function computes the size and alignment of a dynamically-sized type.
     /// The implementations follows closely the SSA implementation found in
     /// `rustc_codegen_ssa::glue::size_and_align_of_dst`.
+    ///
+    /// TODO: Add UB check for size overflow.
     pub fn size_and_align_of_dst(&mut self, ty: Ty, arg: Expr) -> SizeAlign {
         let layout = self.layout_of_stable(ty);
         let usizet = Type::size_t();
