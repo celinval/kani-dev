@@ -6,16 +6,20 @@ use super::{PropertyClass, bb_label};
 use crate::codegen_cprover_gotoc::codegen::ty_stable::pointee_type_stable;
 use crate::codegen_cprover_gotoc::{GotocCtx, utils};
 use crate::intrinsics::Intrinsic;
+use crate::kani_middle::abi::LayoutOf;
 use crate::unwrap_or_return_codegen_unimplemented_stmt;
 use cbmc::goto_program::{
-    ArithmeticOverflowResult, BinaryOperator, BuiltinFn, Expr, Location, Stmt, Type,
+    ARITH_OVERFLOW_OVERFLOWED_FIELD, ARITH_OVERFLOW_RESULT_FIELD, ArithmeticOverflowResult,
+    BinaryOperator, BuiltinFn, Expr, Location, Stmt, Type, arithmetic_overflow_result_type,
 };
+use num::ToPrimitive;
 use rustc_middle::ty::ParamEnv;
 use rustc_middle::ty::layout::ValidityRequirement;
 use rustc_smir::rustc_internal;
 use stable_mir::mir::mono::Instance;
 use stable_mir::mir::{BasicBlockIdx, Operand, Place};
 use stable_mir::ty::{GenericArgs, RigidTy, Span, Ty, TyKind, UintTy};
+use std::cmp::max;
 use tracing::debug;
 
 pub struct SizeAlign {
@@ -221,7 +225,7 @@ impl GotocCtx<'_> {
                 // The type `T` that we'll compute the size or alignment.
                 let target_ty = args.0[0].expect_ty();
                 let arg = fargs.remove(0);
-                let size_align = self.size_and_align_of_dst(*target_ty, arg);
+                let size_align = self.size_and_align_of_dst(*target_ty, arg, loc);
                 self.codegen_expr_to_place_stable(place, size_align.$which, loc)
             }};
         }
@@ -1247,100 +1251,145 @@ impl GotocCtx<'_> {
     /// The implementations follows closely the SSA implementation found in
     /// `rustc_codegen_ssa::glue::size_and_align_of_dst`.
     ///
-    /// TODO: Add UB check for size overflow.
-    pub fn size_and_align_of_dst(&mut self, ty: Ty, arg: Expr) -> SizeAlign {
-        let layout = self.layout_of_stable(ty);
-        let usizet = Type::size_t();
-        if !layout.is_unsized() {
-            let size = Expr::int_constant(layout.size.bytes_usize(), Type::size_t())
+    /// TODO: Add UB check for size overflow, non-power of 2 alignment, foreign type.
+    pub fn size_and_align_of_dst(&mut self, ty: Ty, arg: Expr, loc: Location) -> SizeAlign {
+        let layout = LayoutOf::new(ty);
+        debug!(?layout, "size_and_align_of_dst");
+        if layout.is_sized() {
+            let size = Expr::int_constant(layout.size_of().unwrap(), Type::size_t())
                 .with_size_of_annotation(self.codegen_ty_stable(ty));
-            let align = Expr::int_constant(layout.align.abi.bytes(), usizet);
-            return SizeAlign { size, align };
-        }
-        match ty.kind() {
-            TyKind::RigidTy(RigidTy::Dynamic(..)) => {
-                // For traits, we need to retrieve the size and alignment from the vtable.
-                let vtable = arg.member("vtable", &self.symbol_table).dereference();
-                SizeAlign {
-                    size: vtable.clone().member("size", &self.symbol_table),
-                    align: vtable.member("align", &self.symbol_table),
-                }
+            let align = Expr::int_constant(layout.align_of().unwrap(), Type::size_t());
+            SizeAlign { size, align }
+        } else {
+            if let TyKind::RigidTy(RigidTy::Adt(def, _)) = ty.kind() {
+                assert!(!def.is_simd(), "SIMD structures should be sized");
+                // It should not be possible to create a packed type with unknown size.
+                assert!(
+                    !rustc_internal::internal(self.tcx, def).repr().packed(),
+                    "Expected non-packed representation for structure with unsized tail"
+                );
             }
-            TyKind::RigidTy(RigidTy::Slice(_)) | TyKind::RigidTy(RigidTy::Str) => {
-                let unit_t = match ty.kind() {
-                    TyKind::RigidTy(RigidTy::Slice(et)) => et,
-                    TyKind::RigidTy(RigidTy::Str) => Ty::unsigned_ty(UintTy::U8),
-                    _ => unreachable!(),
-                };
-                let unit = self.layout_of_stable(unit_t);
-                // The info in this case is the length of the str, so the size is that
-                // times the unit size.
-                let size = Expr::int_constant(unit.size.bytes_usize(), Type::size_t())
-                    .with_size_of_annotation(self.codegen_ty_stable(unit_t))
-                    .mul(arg.member("len", &self.symbol_table));
-                let align = Expr::int_constant(layout.align.abi.bytes(), usizet);
-                SizeAlign { size, align }
-            }
-            _ => {
-                // This arm handles the case where the dynamically-sized type is nested within the type.
-                // The first arm handled the case of the dynamically-sized type itself (a trait object).
-                // This case assumes that layout correctly describes the layout of the type instance.
-                // In particular, if this is an object of an enum type, the layout describes the
-                // layout of the current variant.  The layout includes the offset from
-                // the start of the object to the start of each field of the object.
-                // The only size left in question is the size of the final field.
 
-                // FIXME: Modify the macro calling this function to ensure that it is only called
-                // with a dynamically-sized type (and not, for example, a pointer type of known size).
+            let (size_of_unsized, align_unsized) = if layout.has_trait_tail() {
+                let vtable = arg.clone().member("vtable", &self.symbol_table).dereference();
+                (
+                    vtable.clone().member("size", &self.symbol_table),
+                    vtable.member("align", &self.symbol_table),
+                )
+            } else {
+                let elem_ty = layout.unsized_tail_elem_ty().unwrap();
+                let elem_layout = LayoutOf::new(elem_ty);
+                let elem_size = Expr::int_constant(elem_layout.size_of().unwrap(), Type::size_t())
+                    .with_size_of_annotation(self.codegen_ty_stable(elem_ty));
+                assert!(elem_layout.is_sized(), "Expected sized element, but found: {elem_ty:?}");
+                (
+                    self.binop_with_overflow_check(
+                        BinaryOperator::OverflowResultMult,
+                        arg.clone().member("len", &self.symbol_table),
+                        elem_size,
+                        loc,
+                    ),
+                    Expr::int_constant(elem_layout.align_of().unwrap(), Type::size_t()),
+                )
+            };
 
-                assert!(!ty.kind().is_simd());
-
-                // The offset of the nth field gives the size of the first n-1 fields.
-                // FIXME: We assume they are aligned according to the machine-preferred alignment given by layout abi.
-                let n = layout.fields.count() - 1;
-                let sized_size =
-                    Expr::int_constant(layout.fields.offset(n).bytes(), Type::size_t())
-                        .with_size_of_annotation(self.codegen_ty_stable(ty));
-                let sized_align = Expr::int_constant(layout.align.abi.bytes(), Type::size_t());
-
-                // Call this function recursively to compute the size and align for the last field.
-                let field_ty = rustc_internal::stable(layout.field(self, n).ty);
-                let SizeAlign { size: unsized_size, align: mut unsized_align } =
-                    self.size_and_align_of_dst(field_ty, arg);
-
-                // The size of the object is the sum of the sized and unsized portions.
-                // FIXME: We should add padding between the sized and unsized portions,
-                // but see the comment in ssa codegen saying this is not currently done
-                // until issues #26403 and #27023 are resolved.
-                let size = sized_size.plus(unsized_size);
-
-                // Packed types ignore the alignment of their fields.
-                if let TyKind::RigidTy(RigidTy::Adt(def, _)) = ty.kind() {
-                    if rustc_internal::internal(self.tcx, def).repr().packed() {
-                        unsized_align = sized_align.clone();
+            // The alignment should be the maximum of the alignments for the
+            // sized and unsized portions.
+            let align_sized = layout.align_of_sized_portion();
+            let align = if align_sized > 1 {
+                if let Some(val) = align_unsized.int_constant_value() {
+                    // For slices, the align value is constant, thus, we can compute max statically.
+                    let final_align = max(align_sized, val.to_usize().unwrap());
+                    if final_align.is_power_of_two() {
+                        Expr::int_constant(final_align, Type::size_t())
+                    } else {
+                        Expr::statement_expression(
+                            vec![
+                                self.codegen_assert_assume(
+                                    Expr::bool_false(),
+                                    PropertyClass::SafetyCheck,
+                                    &format!(
+                                        "align should be power of two, but found: {final_align}"
+                                    ),
+                                    loc,
+                                ),
+                                Expr::int_constant(final_align, Type::size_t()).as_stmt(loc),
+                            ],
+                            Type::size_t(),
+                            loc,
+                        )
                     }
+                } else {
+                    Expr::int_constant(align_sized, Type::size_t())
                 }
+            } else {
+                align_unsized
+            };
 
-                // The alignment should be the maximum of the alignments for the
-                // sized and unsized portions.
-                let align = sized_align
-                    .clone()
-                    .ge(unsized_align.clone())
-                    .ternary(sized_align, unsized_align);
+            // Compute size by adding statically known size with dynamically stored size, and
+            // adjusting it to be a multiple of `align`.
+            // We follow the SSA implementation using bit arithmetic: (size + (align-1)) & -align
+            let size_of_sized = layout.size_of_sized_portion();
+            let size_sum = if size_of_sized > 0 {
+                self.binop_with_overflow_check(
+                    BinaryOperator::OverflowResultPlus,
+                    Expr::int_constant(size_of_sized, Type::size_t()),
+                    size_of_unsized,
+                    loc,
+                )
+            } else {
+                size_of_unsized
+            };
 
-                // Pad the size of the type to make it a multiple of align.
-                // We follow the SSA implementation using bit arithmetic: (size + (align-1)) & -align
-                // This assumes that align is a power of two, and that all values have the same size_t.
+            // Pad the size of the type to make it a multiple of align.
+            let one = Expr::int_constant::<isize>(1, Type::size_t());
+            let addend = align.clone().sub(one);
+            let add = self.binop_with_overflow_check(
+                BinaryOperator::OverflowResultPlus,
+                size_sum,
+                addend,
+                loc,
+            );
+            let neg = align.clone().neg();
+            let size = add.bitand(neg);
 
-                let one = Expr::int_constant::<isize>(1, Type::size_t());
-                let addend = align.clone().sub(one);
-                let add = size.plus(addend);
-                let neg = align.clone().neg();
-                let size = add.bitand(neg);
-
-                SizeAlign { size, align }
-            }
+            SizeAlign { size, align }
         }
+    }
+
+    /// Compute an unsafe binary operation and assert that it does not overflow.
+    ///
+    /// Supported operations: Plus, Mult, Minus.
+    fn binop_with_overflow_check(
+        &mut self,
+        bin_op: BinaryOperator,
+        left: Expr,
+        right: Expr,
+        loc: Location,
+    ) -> Expr {
+        let bin_op_name = match bin_op {
+            BinaryOperator::OverflowResultMinus => "subtract",
+            BinaryOperator::OverflowResultMult => "multiply",
+            BinaryOperator::OverflowResultPlus => "add",
+            _ => unreachable!(),
+        };
+        let res_type = left.typ().clone();
+        let overflow_type = arithmetic_overflow_result_type(res_type.clone());
+        let tag = overflow_type.tag().unwrap();
+        let struct_tag =
+            self.ensure_struct(tag, tag, |_, _| overflow_type.components().unwrap().clone());
+        let res = left.overflow_op(bin_op, right);
+        // store the result in a temporary variable
+        let (var, decl) = self.decl_temp_variable(struct_tag, Some(res), loc);
+        let res_field = var.clone().member(ARITH_OVERFLOW_RESULT_FIELD, &self.symbol_table);
+        let overflow = var.clone().member(ARITH_OVERFLOW_OVERFLOWED_FIELD, &self.symbol_table);
+        let check_stmt = self.codegen_assert_assume(
+            overflow.not(),
+            PropertyClass::ArithmeticOverflow,
+            format!("attempt to {} with overflow", bin_op_name).as_str(),
+            loc,
+        );
+        Expr::statement_expression(vec![decl, check_stmt, res_field.as_stmt(loc)], res_type, loc)
     }
 
     /// `simd_extract(vector, n)` returns the `n`-th element of `vector`

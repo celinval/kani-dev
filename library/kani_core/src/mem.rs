@@ -158,7 +158,7 @@ macro_rules! kani_mem {
         /// This will panic if `ptr` points to an invalid `non_null`
         fn is_inbounds<T: ?Sized>(ptr: *const T) -> bool {
             // If size overflows, then pointer cannot be inbounds.
-            let Some(sz) = checked_size_of_val_raw(ptr) else { return false };
+            let Some(sz) = checked_size_of_raw(ptr) else { return false };
             if sz == 0 {
                 true // ZST pointers are always valid including nullptr.
             } else if ptr.is_null() {
@@ -210,14 +210,14 @@ macro_rules! kani_mem {
         /// # Safety
         ///
         /// - Users have to ensure that the pointer is aligned the pointed memory is allocated.
-        #[rustc_diagnostic_item = "KaniValidValue"]
+        #[kanitool::fn_marker = "KaniValidValue"]
         #[inline(never)]
         unsafe fn has_valid_value<T: ?Sized>(_ptr: *const T) -> bool {
             kani_intrinsic()
         }
 
         /// Check whether `len * size_of::<T>()` bytes are initialized starting from `ptr`.
-        #[rustc_diagnostic_item = "KaniIsInitialized"]
+        #[kanitool::fn_marker = "KaniIsInitialized"]
         #[inline(never)]
         pub(crate) fn is_initialized<T: ?Sized>(_ptr: *const T) -> bool {
             kani_intrinsic()
@@ -226,9 +226,9 @@ macro_rules! kani_mem {
         /// Compute the size of the val pointed to if safe.
         ///
         /// Return `None` if an overflow occurred.
-        #[rustc_diagnostic_item = "KaniSizeOfVal"]
+        #[kanitool::fn_marker = "KaniSizeOfRaw"]
         #[inline(never)]
-        fn checked_size_of_val_raw<T: ?Sized>(ptr: *const T) -> Option<usize> {
+        fn checked_size_of_raw<T: ?Sized>(ptr: *const T) -> Option<usize> {
             #[cfg(not(feature = "concrete_playback"))]
             return kani_intrinsic();
 

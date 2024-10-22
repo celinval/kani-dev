@@ -351,7 +351,7 @@ impl GotocCtx<'_> {
             if ptr_place_ty.kind().is_raw_ptr() {
                 // Extract the size of the pointee.
                 let SizeAlign { size: sz, align } =
-                    self.size_and_align_of_dst(place_ref_ty, place_ref);
+                    self.size_and_align_of_dst(place_ref_ty, place_ref, *loc);
 
                 // Encode __CPROVER_r_ok(ptr, size).
                 // First, generate a CBMC expression representing the pointer.

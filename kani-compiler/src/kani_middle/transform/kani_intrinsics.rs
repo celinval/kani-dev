@@ -8,7 +8,7 @@
 //! by the transformation.
 
 use crate::args::{Arguments, ExtraChecks};
-use crate::kani_middle::attributes::matches_diagnostic;
+use crate::kani_middle::attributes::KaniAttributes;
 use crate::kani_middle::transform::body::{
     CheckType, InsertPosition, MutableBody, SourceInstruction,
 };
@@ -29,7 +29,8 @@ use stable_mir::target::MachineInfo;
 use stable_mir::ty::{FnDef, MirConst, RigidTy, Ty, TyKind, UintTy};
 use std::collections::HashMap;
 use std::fmt::Debug;
-use strum_macros::AsRefStr;
+use std::str::FromStr;
+use strum_macros::{AsRefStr, EnumString};
 use tracing::trace;
 
 /// Generate the body for a few Kani intrinsics.
@@ -61,10 +62,15 @@ impl TransformPass for IntrinsicGeneratorPass {
     /// For every unsafe dereference or a transmute operation, we check all values are valid.
     fn transform(&mut self, tcx: TyCtxt, body: Body, instance: Instance) -> (bool, Body) {
         trace!(function=?instance.name(), "transform");
-        if matches_diagnostic(tcx, instance.def, Intrinsics::KaniValidValue.as_ref()) {
-            (true, self.valid_value_body(tcx, body))
-        } else if matches_diagnostic(tcx, instance.def, Intrinsics::KaniIsInitialized.as_ref()) {
-            (true, self.is_initialized_body(tcx, body))
+        let attributes = KaniAttributes::for_instance(tcx, instance);
+        if let Some(kani_intrinsic) =
+            attributes.fn_marker().and_then(|name| KaniIntrinsics::from_str(name.as_str()).ok())
+        {
+            match kani_intrinsic {
+                KaniIntrinsics::KaniIsInitialized => (true, self.is_initialized_body(tcx, body)),
+                KaniIntrinsics::KaniValidValue => (true, self.valid_value_body(tcx, body)),
+                KaniIntrinsics::KaniSizeOfRaw => todo!(),
+            }
         } else {
             (false, body)
         }
@@ -364,9 +370,11 @@ impl IntrinsicGeneratorPass {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, AsRefStr)]
+#[allow(clippy::enum_variant_names)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, AsRefStr, EnumString)]
 #[strum(serialize_all = "PascalCase")]
-enum Intrinsics {
+enum KaniIntrinsics {
     KaniValidValue,
     KaniIsInitialized,
+    KaniSizeOfRaw,
 }
