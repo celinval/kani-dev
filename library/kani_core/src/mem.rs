@@ -44,7 +44,6 @@
 macro_rules! kani_mem {
     ($core:tt) => {
         use super::kani_intrinsic;
-        use $core::mem::{align_of_val_raw, size_of_val_raw};
         use $core::ptr::{DynMetadata, NonNull, Pointee};
 
         /// Check if the pointer is valid for write access according to [crate::mem] conditions 1, 2
@@ -153,6 +152,38 @@ macro_rules! kani_mem {
             cbmc::same_allocation(ptr1, ptr2)
         }
 
+        /// Compute the size of the val pointed to if safe.
+        ///
+        /// Return `None` if an overflow would occur, or if alignment is not power of two.
+        pub fn checked_size_of_raw<T: ?Sized>(ptr: *const T) -> Option<usize> {
+            #[cfg(not(feature = "concrete_playback"))]
+            {
+                let size_of_unsized = crate::kani::size_of_unsized_portion(ptr)?;
+                let sum = size_of_unsized.checked_add(crate::kani::size_of_sized_portion::<T>())?;
+                let align = checked_align_of_raw(ptr)?;
+                // Size must be multiple of alignment.
+                // Since alignment is power-of-two, we can compute as (size + (align - 1)) & -align
+                return Some((sum.checked_add(align - 1))? & align.wrapping_neg());
+            }
+
+            #[cfg(feature = "concrete_playback")]
+            if core::mem::size_of::<<T as Pointee>::Metadata>() == 0 {
+                // SAFETY: It is currently safe to call this with a thin pointer.
+                unsafe { Some(core::mem::size_of_val_raw(ptr)) }
+            } else {
+                panic!("Cannot safely compute size of `{}` at runtime", core::any::type_name::<T>())
+            }
+        }
+
+        /// Compute the size of the val pointed to if safe.
+        ///
+        /// Return `None` if alignment information cannot be retrieved (foreign types), or if value
+        /// is not power-of-two.
+        pub fn checked_align_of_raw<T: ?Sized>(ptr: *const T) -> Option<usize> {
+            crate::kani::align_of_raw(ptr)
+                .and_then(|align| align.is_power_of_two().then_some(align))
+        }
+
         /// Checks that `ptr` points to an allocation that can hold data of size calculated from `T`.
         ///
         /// This will panic if `ptr` points to an invalid `non_null`
@@ -179,8 +210,8 @@ macro_rules! kani_mem {
         // Return whether the pointer is aligned
         #[allow(clippy::manual_is_power_of_two)]
         fn is_ptr_aligned<T: ?Sized>(ptr: *const T) -> bool {
-            // SAFETY: Pointer metadata of wide pointers must be a valid integer.
-            let align = unsafe { align_of_val_raw(ptr) };
+            // Cannot be aligned if pointer alignment cannot be computed.
+            let Some(align) = checked_align_of_raw(ptr) else { return false };
             if align > 0 && (align & (align - 1)) == 0 {
                 // Mod of power of 2 can be done with an &.
                 ptr as *const () as usize & (align - 1) == 0
@@ -221,23 +252,6 @@ macro_rules! kani_mem {
         #[inline(never)]
         pub(crate) fn is_initialized<T: ?Sized>(_ptr: *const T) -> bool {
             kani_intrinsic()
-        }
-
-        /// Compute the size of the val pointed to if safe.
-        ///
-        /// Return `None` if an overflow occurred.
-        #[kanitool::fn_marker = "KaniSizeOfRaw"]
-        #[inline(never)]
-        fn checked_size_of_raw<T: ?Sized>(ptr: *const T) -> Option<usize> {
-            #[cfg(not(feature = "concrete_playback"))]
-            return kani_intrinsic();
-
-            #[cfg(feature = "concrete_playback")]
-            if core::mem::size_of::<<T as Pointee>::Metadata>() == 0 {
-                unsafe { Some(size_of_val_raw(ptr)) }
-            } else {
-                panic!("Cannot safely compute size of `{}` at runtime", core::any::type_name::<T>())
-            }
         }
 
         /// A helper to assert `is_initialized` to use it as a part of other predicates.

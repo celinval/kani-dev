@@ -17,7 +17,6 @@ struct Wrapper<T: ?Sized> {
 mod valid_access {
     use super::*;
     #[kani::proof]
-    #[cfg(blah)]
     pub fn check_valid_dyn_ptr() {
         let mut var: Wrapper<u64> = kani::any();
         let fat_ptr: *mut Wrapper<dyn PartialEq<u64>> = &mut var as *mut _;
@@ -30,7 +29,6 @@ mod invalid_access {
     use std::ptr;
     #[kani::proof]
     #[kani::should_panic]
-    #[cfg(blah)]
     pub fn check_invalid_dyn_ptr() {
         unsafe fn new_dead_ptr<T>(val: T) -> *const T {
             let local = val;

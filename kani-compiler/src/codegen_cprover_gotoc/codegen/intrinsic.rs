@@ -1260,6 +1260,10 @@ impl GotocCtx<'_> {
                 .with_size_of_annotation(self.codegen_ty_stable(ty));
             let align = Expr::int_constant(layout.align_of().unwrap(), Type::size_t());
             SizeAlign { size, align }
+        } else if layout.has_foreign_tail() {
+            // This should codegen as a panic (not UB)!
+            // MSG: attempted to compute the size or alignment of extern type `{ty}`
+            todo!("codegen_panic")
         } else {
             if let TyKind::RigidTy(RigidTy::Adt(def, _)) = ty.kind() {
                 assert!(!def.is_simd(), "SIMD structures should be sized");

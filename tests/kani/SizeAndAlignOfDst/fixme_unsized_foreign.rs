@@ -14,5 +14,6 @@ extern "C" {
 fn check_adjusted_tup_size() {
     let tup: (u32, usize) = kani::any();
     let ptr: *const (u32, ExternalType) = &tup as *const _ as *const _;
-    let _size = std::mem::size_of_val(&ptr);
+    let size = std::mem::size_of_val(&ptr);
+    assert_eq!(size, 4);
 }

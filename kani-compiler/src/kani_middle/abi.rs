@@ -3,7 +3,7 @@
 //! This module contains code for handling type abi information.
 
 use stable_mir::abi::{FieldsShape, LayoutShape};
-use stable_mir::ty::{RigidTy, Ty};
+use stable_mir::ty::{RigidTy, Ty, TyKind};
 use tracing::debug;
 
 /// A struct to encapsulate the layout information for a given type
@@ -22,6 +22,14 @@ impl LayoutOf {
     /// Return whether the type is sized.
     pub fn is_sized(&self) -> bool {
         self.layout.is_sized()
+    }
+
+    /// Return whether the type is unsized and its tail is a foreign item.
+    ///
+    /// This will also return `true` if the type is foreign.
+    pub fn has_foreign_tail(&self) -> bool {
+        self.unsized_tail()
+            .map_or(false, |t| matches!(t.kind(), TyKind::RigidTy(RigidTy::Foreign(_))))
     }
 
     /// Return whether the type is unsized and its tail is a trait object.
@@ -140,7 +148,17 @@ impl LayoutOf {
     }
 
     /// Return the alignment of the type if it's know at compilation time.
+    ///
+    /// The alignment is known at compilation type for sized types and types with slice tail.
+    ///
+    /// Note: We assume u64 and usize are the same since Kani is only supported in 64bits machines.
+    /// Add a configuration in case we ever decide to port this to a 32-bits machine.
+    #[cfg(target_pointer_width = "64")]
     pub fn align_of(&self) -> Option<usize> {
-        if self.is_sized() { self.layout.abi_align.try_into().ok() } else { None }
+        if self.is_sized() || self.has_slice_tail() {
+            self.layout.abi_align.try_into().ok()
+        } else {
+            None
+        }
     }
 }
