@@ -300,7 +300,7 @@ macro_rules! kani_intrinsics {
         ///
         /// For example, this function will return 2 as the sized portion of `*const (u8,  [u16])`:
         #[allow(dead_code)]
-        #[kanitool::fn_marker = "SizeOfSized"]
+        #[kanitool::fn_marker = "SizeOfSizedIntrinsic"]
         #[inline(never)]
         pub(crate) fn size_of_sized_portion<T: ?Sized>() -> usize {
             kani_intrinsic()
@@ -313,7 +313,7 @@ macro_rules! kani_intrinsics {
         ///
         /// For sized types, this function will return Some(0).
         #[allow(dead_code)]
-        #[kanitool::fn_marker = "SizeOfUnsized"]
+        #[kanitool::fn_marker = "SizeOfUnsizedIntrinsic"]
         #[inline(never)]
         pub(crate) fn size_of_unsized_portion<T: ?Sized>(_ptr: *const T) -> Option<usize> {
             kani_intrinsic()
@@ -324,7 +324,7 @@ macro_rules! kani_intrinsics {
         /// This will return `None` if the type is foreign or contain a foreign element.
         /// Note that alignment value may be incorrect.
         #[allow(dead_code)]
-        #[kanitool::fn_marker = "AlignOfRaw"]
+        #[kanitool::fn_marker = "AlignOfRawIntrinsic"]
         #[inline(never)]
         pub(crate) fn align_of_raw<T: ?Sized>(_ptr: *const T) -> Option<usize> {
             kani_intrinsic()
@@ -332,7 +332,7 @@ macro_rules! kani_intrinsics {
 
         #[doc(hidden)]
         #[allow(dead_code)]
-        #[kanitool::fn_marker = "SafetyCheck"]
+        #[kanitool::fn_marker = "SafetyCheckIntrinsic"]
         #[inline(never)]
         pub(crate) fn safety_check(cond: bool, msg: &'static str) {
             #[cfg(not(feature = "concrete_playback"))]

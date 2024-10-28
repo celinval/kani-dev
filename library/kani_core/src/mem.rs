@@ -241,14 +241,14 @@ macro_rules! kani_mem {
         /// # Safety
         ///
         /// - Users have to ensure that the pointer is aligned the pointed memory is allocated.
-        #[kanitool::fn_marker = "KaniValidValue"]
+        #[kanitool::fn_marker = "ValidValueIntrinsic"]
         #[inline(never)]
         unsafe fn has_valid_value<T: ?Sized>(_ptr: *const T) -> bool {
             kani_intrinsic()
         }
 
         /// Check whether `len * size_of::<T>()` bytes are initialized starting from `ptr`.
-        #[kanitool::fn_marker = "KaniIsInitialized"]
+        #[kanitool::fn_marker = "IsInitializedIntrinsic"]
         #[inline(never)]
         pub(crate) fn is_initialized<T: ?Sized>(_ptr: *const T) -> bool {
             kani_intrinsic()

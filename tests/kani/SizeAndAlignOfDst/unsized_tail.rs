@@ -5,7 +5,7 @@
 
 extern crate kani;
 
-use kani::mem::checked_size_of_raw;
+use kani::mem::{checked_align_of_raw, checked_size_of_raw};
 use std::fmt::Debug;
 
 #[derive(kani::Arbitrary)]
@@ -58,4 +58,13 @@ pub fn checked_size_with_overflow() {
 
     let invalid = slice as *const Pair<u8, [u8]>;
     assert_eq!(checked_size_of_raw(invalid), None);
+}
+
+#[kani::proof]
+pub fn checked_align_of_dyn_tail() {
+    let align_sized = checked_align_of_raw(&Pair(0u8, 19i32));
+    assert_eq!(align_sized, Some(4));
+
+    let align_dyn = checked_align_of_raw(&Pair(10u8, [1i32; 10]) as &Pair<u8, dyn Debug>);
+    assert_eq!(align_dyn, Some(4));
 }

@@ -34,10 +34,12 @@ macro_rules! generate_models {
             /// Retrieve the size of the object stored in the vtable.
             ///
             /// This model is used to implement `size_of_unsized_portion` intrinsic.
+            ///
+            /// For that, `U` is a trait, and `T` is either equal to `U` or has a tail `U`.
             #[kanitool::fn_marker = "SizeOfDynPortionModel"]
-            pub(crate) fn size_of_dyn_portion<T>(ptr: *const T) -> Option<usize>
+            pub(crate) fn size_of_dyn_portion<T, U: ?Sized>(ptr: *const T) -> Option<usize>
             where
-                T: ?Sized + Pointee<Metadata = DynMetadata<T>>,
+                T: ?Sized + Pointee<Metadata = DynMetadata<U>>,
             {
                 Some(ptr::metadata(ptr).size_of())
             }
@@ -45,10 +47,12 @@ macro_rules! generate_models {
             /// Retrieve the alignment of the object stored in the vtable.
             ///
             /// This model is used to implement `align_of_raw` intrinsic.
+            ///
+            /// For that, `U` is a trait, and `T` is either equal to `U` or has a tail `U`.
             #[kanitool::fn_marker = "AlignOfDynPortionModel"]
-            pub(crate) fn align_of_dyn_portion<T>(ptr: *const T) -> Option<usize>
+            pub(crate) fn align_of_dyn_portion<T, U: ?Sized>(ptr: *const T) -> Option<usize>
             where
-                T: ?Sized + Pointee<Metadata = DynMetadata<T>>,
+                T: ?Sized + Pointee<Metadata = DynMetadata<U>>,
             {
                 Some(ptr::metadata(ptr).align_of())
             }

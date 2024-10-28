@@ -7,15 +7,15 @@
 //! information; thus, they are implemented as a transformation pass where their body get generated
 //! by the transformation.
 
-use crate::args::{Arguments, ExtraChecks};
+use crate::args::ExtraChecks;
 use crate::kani_middle::abi::LayoutOf;
-use crate::kani_middle::attributes::KaniAttributes;
+use crate::kani_middle::attributes::{KaniAttributes, KaniFunction, KaniIntrinsic, KaniModel};
 use crate::kani_middle::transform::body::{
     CheckType, InsertPosition, MutableBody, SourceInstruction,
 };
 use crate::kani_middle::transform::check_uninit::PointeeInfo;
 use crate::kani_middle::transform::check_uninit::{
-    PointeeLayout, get_mem_init_fn_def, mk_layout_operand, resolve_mem_init_fn,
+    PointeeLayout, mk_layout_operand, resolve_mem_init_fn,
 };
 use crate::kani_middle::transform::check_values::{build_limits, ty_validity_per_offset};
 use crate::kani_middle::transform::{TransformPass, TransformationType};
@@ -23,8 +23,8 @@ use crate::kani_queries::QueryDb;
 use rustc_middle::ty::TyCtxt;
 use stable_mir::mir::mono::Instance;
 use stable_mir::mir::{
-    AggregateKind, BasicBlock, BasicBlockIdx, BinOp, Body, ConstOperand, Mutability, Operand,
-    Place, ProjectionElem, RETURN_LOCAL, Rvalue, Statement, StatementKind, SwitchTargets,
+    AggregateKind, BasicBlock, BasicBlockIdx, BinOp, Body, ConstOperand, Local, Mutability,
+    Operand, Place, ProjectionElem, RETURN_LOCAL, Rvalue, Statement, StatementKind, SwitchTargets,
     Terminator, TerminatorKind, UnOp, UnwindAction,
 };
 use stable_mir::target::MachineInfo;
@@ -34,17 +34,16 @@ use stable_mir::ty::{
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::str::FromStr;
-use strum_macros::{AsRefStr, EnumString};
 use tracing::{debug, trace};
 
 /// Generate the body for a few Kani intrinsics.
 #[derive(Debug)]
 pub struct IntrinsicGeneratorPass {
-    pub check_type: CheckType,
+    check_type: CheckType,
     /// Used to cache FnDef lookups of injected memory initialization functions.
-    pub mem_init_fn_cache: HashMap<&'static str, FnDef>,
+    kani_defs: HashMap<KaniFunction, FnDef>,
     /// Used to enable intrinsics depending on the flags passed.
-    pub arguments: Arguments,
+    enable_uninit: bool,
 }
 
 impl TransformPass for IntrinsicGeneratorPass {
@@ -68,15 +67,15 @@ impl TransformPass for IntrinsicGeneratorPass {
         trace!(function=?instance.name(), "transform");
         let attributes = KaniAttributes::for_instance(tcx, instance);
         if let Some(kani_intrinsic) =
-            attributes.fn_marker().and_then(|name| KaniIntrinsics::from_str(name.as_str()).ok())
+            attributes.fn_marker().and_then(|name| KaniIntrinsic::from_str(name.as_str()).ok())
         {
             match kani_intrinsic {
-                KaniIntrinsics::KaniIsInitialized => (true, self.is_initialized_body(tcx, body)),
-                KaniIntrinsics::KaniValidValue => (true, self.valid_value_body(tcx, body)),
-                KaniIntrinsics::SizeOfSized => (true, self.size_of_sized(body, instance)),
-                KaniIntrinsics::SizeOfUnsized => (true, self.size_of_unsized(body)),
-                KaniIntrinsics::AlignOfRaw => (true, self.align_of_raw(body)),
-                KaniIntrinsics::SafetyCheck => {
+                KaniIntrinsic::IsInitialized => (true, self.is_initialized_body(tcx, body)),
+                KaniIntrinsic::ValidValue => (true, self.valid_value_body(tcx, body)),
+                KaniIntrinsic::SizeOfSized => (true, self.size_of_sized(body, instance)),
+                KaniIntrinsic::SizeOfUnsized => (true, self.size_of_unsized(body, instance)),
+                KaniIntrinsic::AlignOfRaw => (true, self.align_of_raw(body, instance)),
+                KaniIntrinsic::SafetyCheck => {
                     /* This is encoded in hooks*/
                     (false, body)
                 }
@@ -88,6 +87,13 @@ impl TransformPass for IntrinsicGeneratorPass {
 }
 
 impl IntrinsicGeneratorPass {
+    pub fn new(check_type: CheckType, queries: &QueryDb) -> Self {
+        let enable_uninit = queries.args().ub_check.contains(&ExtraChecks::Uninit);
+        let kani_defs = find_kani_functions();
+        debug!(?kani_defs, ?enable_uninit, "IntrinsicGeneratorPass::new");
+        IntrinsicGeneratorPass { check_type, enable_uninit, kani_defs }
+    }
+
     /// Generate the body for valid value. Which should be something like:
     ///
     /// ```
@@ -184,7 +190,7 @@ impl IntrinsicGeneratorPass {
         let mut source = SourceInstruction::Terminator { bb: 0 };
 
         // Short-circut if uninitialized memory checks are not enabled.
-        if !self.arguments.ub_check.contains(&ExtraChecks::Uninit) {
+        if !self.enable_uninit {
             // Initialize return variable with True.
             let span = new_body.locals()[ret_var].span;
             let assign = StatementKind::Assign(
@@ -238,11 +244,7 @@ impl IntrinsicGeneratorPass {
                             return new_body.into();
                         }
                         let is_ptr_initialized_instance = resolve_mem_init_fn(
-                            get_mem_init_fn_def(
-                                tcx,
-                                "KaniIsPtrInitialized",
-                                &mut self.mem_init_fn_cache,
-                            ),
+                            *self.kani_defs.get(&KaniIntrinsic::IsInitialized.into()).unwrap(),
                             layout.len(),
                             *pointee_info.ty(),
                         );
@@ -272,17 +274,17 @@ impl IntrinsicGeneratorPass {
                     }
                     PointeeLayout::Slice { element_layout } => {
                         // Since `str`` is a separate type, need to differentiate between [T] and str.
-                        let (slicee_ty, diagnostic) = match pointee_info.ty().kind() {
+                        let (slicee_ty, intrinsic) = match pointee_info.ty().kind() {
                             TyKind::RigidTy(RigidTy::Slice(slicee_ty)) => {
-                                (slicee_ty, "KaniIsSlicePtrInitialized")
+                                (slicee_ty, KaniModel::IsSlicePtrInitialized.into())
                             }
                             TyKind::RigidTy(RigidTy::Str) => {
-                                (Ty::unsigned_ty(UintTy::U8), "KaniIsStrPtrInitialized")
+                                (Ty::unsigned_ty(UintTy::U8), KaniModel::IsStrPtrInitialized.into())
                             }
                             _ => unreachable!(),
                         };
                         let is_ptr_initialized_instance = resolve_mem_init_fn(
-                            get_mem_init_fn_def(tcx, diagnostic, &mut self.mem_init_fn_cache),
+                            *self.kani_defs.get(&intrinsic).unwrap(),
                             element_layout.len(),
                             slicee_ty,
                         );
@@ -401,7 +403,7 @@ impl IntrinsicGeneratorPass {
     /// ```
     ///
     /// For types where `<T as Pointee>::Metadata` is `usize` see [Self::size_of_slice_tail]:
-    fn size_of_unsized(&mut self, body: Body) -> Body {
+    fn size_of_unsized(&mut self, body: Body, instance: Instance) -> Body {
         // Get information about the pointer passed as an argument.
         let ptr_arg = body.arg_locals().first().expect("Expected a pointer argument");
         let ptr_ty = ptr_arg.ty;
@@ -434,7 +436,10 @@ impl IntrinsicGeneratorPass {
             );
         } else if pointee_layout.has_trait_tail() {
             // Call `size_of_dyn_portion`.
-            todo!()
+            let tail_ty = pointee_layout.unsized_tail().unwrap();
+            let mut args = instance.args();
+            args.0.push(GenericArgKind::Type(tail_ty));
+            self.return_model(&mut new_body, &mut source, KaniModel::SizeOfDynPortion, &args);
         } else if pointee_layout.has_slice_tail() {
             // Size is Some(len x size_of::<elem_ty>()) if no overflow happens
             self.size_of_slice_tail(&mut new_body, pointee_layout, option_def, option_args);
@@ -602,7 +607,7 @@ impl IntrinsicGeneratorPass {
     /// ```
     ///
     /// For types with foreign tails, this will return `None`.
-    fn align_of_raw(&mut self, body: Body) -> Body {
+    fn align_of_raw(&mut self, body: Body, instance: Instance) -> Body {
         // Get information about the pointer passed as an argument.
         let ptr_arg = body.arg_locals().first().expect("Expected a pointer argument");
         let ptr_ty = ptr_arg.ty;
@@ -634,7 +639,10 @@ impl IntrinsicGeneratorPass {
             );
         } else if pointee_layout.has_trait_tail() {
             // Call `align_of_dyn_portion`.
-            todo!()
+            let tail_ty = pointee_layout.unsized_tail().unwrap();
+            let mut args = instance.args();
+            args.0.push(GenericArgKind::Type(tail_ty));
+            self.return_model(&mut new_body, &mut source, KaniModel::AlignOfDynPortion, &args);
         } else {
             // Cannot compute size of foreign types. Return None!
             assert!(pointee_layout.has_foreign_tail());
@@ -648,6 +656,55 @@ impl IntrinsicGeneratorPass {
         }
         new_body.into()
     }
+
+    fn return_model(
+        &mut self,
+        new_body: &mut MutableBody,
+        mut source: &mut SourceInstruction,
+        model: KaniModel,
+        args: &GenericArgs,
+    ) {
+        let operands = vec![Operand::Copy(Place::from(Local::from(1usize)))];
+        let def = self.kani_defs.get(&model.into()).unwrap();
+        let size_of_dyn = Instance::resolve(*def, args).unwrap();
+        new_body.insert_call(
+            &size_of_dyn,
+            &mut source,
+            InsertPosition::Before,
+            operands,
+            Place::from(RETURN_LOCAL),
+        );
+    }
+}
+
+fn find_kani_functions() -> HashMap<KaniFunction, FnDef> {
+    // First try to find `kani` crate. If that exists, look for the items here.
+    // If there's no Kani crate, look for the items in `core` since we could be verifying the std.
+    // Note that users could have other `kani` crates, so we look in all the ones we find.
+    //let crates = stable_mir::find_crates("kani");
+    //crates.into_iter().chain(stable_mir::find_crates("core").into_iter()).find_map(|krate| {
+    //})
+    let mut kani = stable_mir::find_crates("kani");
+    if kani.is_empty() {
+        // In case we are using `kani_core`.
+        kani.extend(stable_mir::find_crates("core"));
+    }
+    kani.into_iter()
+        .find_map(|krate| {
+            let kani_funcs: HashMap<_, _> = krate
+                .fn_defs()
+                .into_iter()
+                .filter_map(|fn_def| {
+                    trace!(?krate, ?fn_def, "find_kani_functions");
+                    KaniFunction::try_from(fn_def).ok().map(|kani_function| {
+                        debug!(?kani_function, ?fn_def, "Found kani function");
+                        (kani_function, fn_def)
+                    })
+                })
+                .collect();
+            (!kani_funcs.is_empty()).then_some(kani_funcs)
+        })
+        .expect("No kani functions found")
 }
 
 /// Build an Rvalue `Some(val)`.
@@ -664,16 +721,4 @@ fn build_none(option: AdtDef, args: GenericArgs) -> Rvalue {
     let var_idx =
         option.variants_iter().find_map(|var| var.fields().is_empty().then_some(var.idx)).unwrap();
     Rvalue::Aggregate(AggregateKind::Adt(option, var_idx, args, None, None), vec![])
-}
-
-#[allow(clippy::enum_variant_names)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq, AsRefStr, EnumString)]
-#[strum(serialize_all = "PascalCase")]
-enum KaniIntrinsics {
-    KaniValidValue,
-    KaniIsInitialized,
-    SizeOfSized,
-    SizeOfUnsized,
-    AlignOfRaw,
-    SafetyCheck,
 }
