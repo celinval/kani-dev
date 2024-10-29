@@ -3,7 +3,7 @@
 //! This module contains code for handling type abi information.
 
 use stable_mir::abi::{FieldsShape, LayoutShape};
-use stable_mir::ty::{RigidTy, Ty, TyKind};
+use stable_mir::ty::{RigidTy, Ty, TyKind, UintTy};
 use tracing::debug;
 
 /// A struct to encapsulate the layout information for a given type
@@ -55,13 +55,10 @@ impl LayoutOf {
         if self.layout.is_unsized() {
             match self.ty.kind().rigid().unwrap() {
                 RigidTy::Slice(..) | RigidTy::Dynamic(..) | RigidTy::Str => Some(self.ty),
-                RigidTy::Adt(adt_def, adt_args) => {
-                    let fields = adt_def.variants_iter().next().unwrap().fields();
-                    let fields_sorted = self.layout.fields.fields_by_offset_order();
-                    let last_field_idx = *fields_sorted.last().unwrap();
-                    Some(fields[last_field_idx].ty_with_args(adt_args))
+                RigidTy::Adt(..) | RigidTy::Tuple(..) => {
+                    // Recurse the tail field type until we find the unsized tail.
+                    self.last_field_layout().unsized_tail()
                 }
-                RigidTy::Tuple(tys) => tys.last().copied(),
                 RigidTy::Foreign(_) => Some(self.ty),
                 _ => unreachable!("Expected unsized type but found `{}`", self.ty),
             }
@@ -78,7 +75,7 @@ impl LayoutOf {
             RigidTy::Slice(elem_ty) => Some(*elem_ty),
             // String slices have the same layout as slices of u8.
             // https://doc.rust-lang.org/reference/type-layout.html#str-layout
-            RigidTy::Str => Some(Ty::usize_ty()),
+            RigidTy::Str => Some(Ty::unsigned_ty(UintTy::U8)),
             _ => None,
         })
     }
@@ -107,10 +104,8 @@ impl LayoutOf {
                     // We compute the size of the sized portion by taking the position of the
                     // last element + the sized portion of that element.
                     let unsized_offset_unadjusted = offsets[last].bytes();
-                    let sized_align = self.layout.abi_align;
-                    debug!(ty=?self.ty, ?unsized_offset_unadjusted, ?sized_align, "size_of_sized_portion");
-                    unsized_offset_unadjusted
-                        + LayoutOf::new(self.unsized_tail().unwrap()).size_of_sized_portion()
+                    debug!(ty=?self.ty, ?unsized_offset_unadjusted, "size_of_sized_portion");
+                    unsized_offset_unadjusted + self.last_field_layout().size_of_sized_portion()
                 }
                 _ => {
                     unreachable!("Expected sized type, but found: `{}`", self.ty)
@@ -134,7 +129,13 @@ impl LayoutOf {
         } else {
             match self.ty.kind().rigid().unwrap() {
                 RigidTy::Slice(_) | RigidTy::Str | RigidTy::Dynamic(..) | RigidTy::Foreign(..) => 1,
-                RigidTy::Adt(..) | RigidTy::Tuple(..) => self.layout.abi_align.try_into().unwrap(),
+                RigidTy::Adt(..) | RigidTy::Tuple(..) => {
+                    // We have to recurse and get the maximum alignment of all sized portions.
+                    let field_layout = self.last_field_layout();
+                    field_layout
+                        .align_of_sized_portion()
+                        .max(self.layout.abi_align.try_into().unwrap())
+                }
                 _ => {
                     unreachable!("Expected sized type, but found: `{}`", self.ty);
                 }
@@ -159,6 +160,34 @@ impl LayoutOf {
             self.layout.abi_align.try_into().ok()
         } else {
             None
+        }
+    }
+
+    /// Return the layout of the last field of the type.
+    ///
+    /// This function is used to get the layout of the last field of an unsized type.
+    /// For example, if we have `*const (u8, [u16])`, the last field is `[u16]`.
+    /// This function will return the layout of `[u16]`.
+    ///
+    /// If the type is not a struct, an enum, or a tuple, with at least one field, this function
+    /// will panic.
+    fn last_field_layout(&self) -> LayoutOf {
+        match self.ty.kind().rigid().unwrap() {
+            RigidTy::Adt(adt_def, adt_args) => {
+                // We have to recurse and get the maximum alignment of all sized portions.
+                let fields = adt_def.variants_iter().next().unwrap().fields();
+                let fields_sorted = self.layout.fields.fields_by_offset_order();
+                let last_field_idx = *fields_sorted.last().unwrap();
+                LayoutOf::new(fields[last_field_idx].ty_with_args(adt_args))
+            }
+            RigidTy::Tuple(tys) => {
+                // We have to recurse and get the maximum alignment of all sized portions.
+                let last_ty = tys.last().expect("Expected unsized tail");
+                LayoutOf::new(*last_ty)
+            }
+            _ => {
+                unreachable!("Expected struct, enum or tuple. Found: `{}`", self.ty);
+            }
         }
     }
 }

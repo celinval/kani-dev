@@ -92,7 +92,7 @@ impl<'a> MutMirVisitor for ReplaceIntrinsicVisitor<'a> {
                     debug!(?intrinsic, "handle_terminator");
                     let model = match intrinsic {
                         Intrinsic::SizeOfVal => self.models[&KaniModel::SizeOfVal],
-                        Intrinsic::MinAlignOfVal => self.models[&KaniModel::SizeOfVal],
+                        Intrinsic::MinAlignOfVal => self.models[&KaniModel::AlignOfVal],
                         // The rest is handled in hooks.
                         _ => {
                             return self.super_terminator(term);

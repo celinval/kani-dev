@@ -453,7 +453,11 @@ impl IntrinsicGeneratorPass {
             self.size_of_slice_tail(&mut new_body, pointee_layout, option_def, option_args);
         } else {
             // Cannot compute size of foreign types. Return None!
-            assert!(pointee_layout.has_foreign_tail());
+            assert!(
+                pointee_layout.has_foreign_tail(),
+                "Expected foreign, but found `{:?}` tail instead.",
+                pointee_layout.unsized_tail()
+            );
             let ret_val = build_none(option_def, option_args);
             new_body.assign_to(
                 Place::from(RETURN_LOCAL),

@@ -46,7 +46,7 @@ mod invalid_access {
         let fat_ptr: *mut Wrapper<[u64]> = &mut var as *mut _;
         let (thin_ptr, size) = fat_ptr.to_raw_parts();
         let new_size: usize = kani::any();
-        let new_ptr: *const [u64] = ptr::from_raw_parts(thin_ptr, new_size);
+        let new_ptr: *const Wrapper<[u64]> = ptr::from_raw_parts(thin_ptr, new_size);
         if new_size <= size {
             assert!(can_dereference(new_ptr));
         } else {

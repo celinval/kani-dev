@@ -15,8 +15,15 @@
 //!       However, Kani compiler cannot generate their body either, and their call are replaced by
 //!       calling special APIs from the solver during codegen.
 //!
+//! Functions #1 and #2 have a `kanitool::fn_marker` attribute attached to them.
+//! The marker value will contain "Intrinsic" or "Model" suffix, indicating which category they
+//! fit in.
+//!
 //! The third today is not handled here. They are handled in
 //! [crate::codegen_cprover_gotoc::overrides::hooks].
+//!
+//! Note that we still need to migrate some of 1 and 2 to this new structure which are currently
+//! using rustc's diagnostic infrastructure.
 
 use crate::kani_middle::attributes;
 use stable_mir::ty::FnDef;
@@ -100,6 +107,8 @@ impl TryFrom<FnDef> for KaniFunction {
 /// First try to find `kani` crate. If that exists, look for the items there.
 /// If there's no Kani crate, look for the items in `core` since we could be using `kani_core`.
 /// Note that users could have other `kani` crates, so we look in all the ones we find.
+///
+/// TODO: We should check if there is no name conflict and that we found all functions.
 pub fn find_kani_functions() -> HashMap<KaniFunction, FnDef> {
     let mut kani = stable_mir::find_crates("kani");
     if kani.is_empty() {
