@@ -25,6 +25,17 @@ macro_rules! generate_models {
                     kani::kani_intrinsic()
                 }
             }
+
+            #[kanitool::fn_marker = "AlignOfValRawModel"]
+            pub fn align_of_val_raw<T: ?Sized>(ptr: *const T) -> usize {
+                if let Some(size) = kani::mem::checked_align_of_raw(ptr) {
+                    size
+                } else {
+                    kani::safety_check(false, "failed to compute align of val");
+                    // Unreachable without panic.
+                    kani::kani_intrinsic()
+                }
+            }
         }
 
         #[allow(dead_code)]
@@ -50,11 +61,14 @@ macro_rules! generate_models {
             ///
             /// For that, `U` is a trait, and `T` is either equal to `U` or has a tail `U`.
             #[kanitool::fn_marker = "AlignOfDynPortionModel"]
-            pub(crate) fn align_of_dyn_portion<T, U: ?Sized>(ptr: *const T) -> Option<usize>
+            pub(crate) fn align_of_dyn_portion<T, U: ?Sized>(
+                ptr: *const T,
+                sized_portion: usize,
+            ) -> Option<usize>
             where
                 T: ?Sized + Pointee<Metadata = DynMetadata<U>>,
             {
-                Some(ptr::metadata(ptr).align_of())
+                Some(ptr::metadata(ptr).align_of().max(sized_portion))
             }
         }
     };

@@ -9,7 +9,8 @@
 
 use crate::args::ExtraChecks;
 use crate::kani_middle::abi::LayoutOf;
-use crate::kani_middle::attributes::{KaniAttributes, KaniFunction, KaniIntrinsic, KaniModel};
+use crate::kani_middle::attributes::KaniAttributes;
+use crate::kani_middle::kani_functions::{KaniFunction, KaniIntrinsic, KaniModel};
 use crate::kani_middle::transform::body::{
     CheckType, InsertPosition, MutableBody, SourceInstruction,
 };
@@ -40,7 +41,7 @@ use tracing::{debug, trace};
 #[derive(Debug)]
 pub struct IntrinsicGeneratorPass {
     check_type: CheckType,
-    /// Used to cache FnDef lookups of injected memory initialization functions.
+    /// Used to cache FnDef lookups for models and Kani intrinsics.
     kani_defs: HashMap<KaniFunction, FnDef>,
     /// Used to enable intrinsics depending on the flags passed.
     enable_uninit: bool,
@@ -51,7 +52,7 @@ impl TransformPass for IntrinsicGeneratorPass {
     where
         Self: Sized,
     {
-        TransformationType::Instrumentation
+        TransformationType::Stubbing
     }
 
     fn is_enabled(&self, _query_db: &QueryDb) -> bool
@@ -89,7 +90,7 @@ impl TransformPass for IntrinsicGeneratorPass {
 impl IntrinsicGeneratorPass {
     pub fn new(check_type: CheckType, queries: &QueryDb) -> Self {
         let enable_uninit = queries.args().ub_check.contains(&ExtraChecks::Uninit);
-        let kani_defs = find_kani_functions();
+        let kani_defs = queries.kani_functions().clone();
         debug!(?kani_defs, ?enable_uninit, "IntrinsicGeneratorPass::new");
         IntrinsicGeneratorPass { check_type, enable_uninit, kani_defs }
     }
@@ -439,7 +440,14 @@ impl IntrinsicGeneratorPass {
             let tail_ty = pointee_layout.unsized_tail().unwrap();
             let mut args = instance.args();
             args.0.push(GenericArgKind::Type(tail_ty));
-            self.return_model(&mut new_body, &mut source, KaniModel::SizeOfDynPortion, &args);
+            let operands = vec![Operand::Copy(Place::from(Local::from(1usize)))];
+            self.return_model(
+                &mut new_body,
+                &mut source,
+                KaniModel::SizeOfDynPortion,
+                &args,
+                operands,
+            );
         } else if pointee_layout.has_slice_tail() {
             // Size is Some(len x size_of::<elem_ty>()) if no overflow happens
             self.size_of_slice_tail(&mut new_body, pointee_layout, option_def, option_args);
@@ -601,8 +609,10 @@ impl IntrinsicGeneratorPass {
     /// For types with trait tail, invoke `align_of_dyn_portion`:
     /// ```
     ///     _0: Option<usize>;
+    ///     _2: usize;
     ///    bb0:
-    ///     _0 = align_of_dyn_portion(_1);
+    ///     _1 = <align_of_sized>;
+    ///     _0 = align_of_dyn_portion(_2, _1);
     ///     return
     /// ```
     ///
@@ -639,10 +649,19 @@ impl IntrinsicGeneratorPass {
             );
         } else if pointee_layout.has_trait_tail() {
             // Call `align_of_dyn_portion`.
+            let sized_align = pointee_layout.align_of_sized_portion();
+            let sized_op = new_body.new_uint_operand(sized_align as _, UintTy::Usize, span);
             let tail_ty = pointee_layout.unsized_tail().unwrap();
             let mut args = instance.args();
             args.0.push(GenericArgKind::Type(tail_ty));
-            self.return_model(&mut new_body, &mut source, KaniModel::AlignOfDynPortion, &args);
+            let operands = vec![Operand::Copy(Place::from(Local::from(1usize))), sized_op];
+            self.return_model(
+                &mut new_body,
+                &mut source,
+                KaniModel::AlignOfDynPortion,
+                &args,
+                operands,
+            );
         } else {
             // Cannot compute size of foreign types. Return None!
             assert!(pointee_layout.has_foreign_tail());
@@ -663,8 +682,8 @@ impl IntrinsicGeneratorPass {
         mut source: &mut SourceInstruction,
         model: KaniModel,
         args: &GenericArgs,
+        operands: Vec<Operand>,
     ) {
-        let operands = vec![Operand::Copy(Place::from(Local::from(1usize)))];
         let def = self.kani_defs.get(&model.into()).unwrap();
         let size_of_dyn = Instance::resolve(*def, args).unwrap();
         new_body.insert_call(
@@ -675,36 +694,6 @@ impl IntrinsicGeneratorPass {
             Place::from(RETURN_LOCAL),
         );
     }
-}
-
-fn find_kani_functions() -> HashMap<KaniFunction, FnDef> {
-    // First try to find `kani` crate. If that exists, look for the items here.
-    // If there's no Kani crate, look for the items in `core` since we could be verifying the std.
-    // Note that users could have other `kani` crates, so we look in all the ones we find.
-    //let crates = stable_mir::find_crates("kani");
-    //crates.into_iter().chain(stable_mir::find_crates("core").into_iter()).find_map(|krate| {
-    //})
-    let mut kani = stable_mir::find_crates("kani");
-    if kani.is_empty() {
-        // In case we are using `kani_core`.
-        kani.extend(stable_mir::find_crates("core"));
-    }
-    kani.into_iter()
-        .find_map(|krate| {
-            let kani_funcs: HashMap<_, _> = krate
-                .fn_defs()
-                .into_iter()
-                .filter_map(|fn_def| {
-                    trace!(?krate, ?fn_def, "find_kani_functions");
-                    KaniFunction::try_from(fn_def).ok().map(|kani_function| {
-                        debug!(?kani_function, ?fn_def, "Found kani function");
-                        (kani_function, fn_def)
-                    })
-                })
-                .collect();
-            (!kani_funcs.is_empty()).then_some(kani_funcs)
-        })
-        .expect("No kani functions found")
 }
 
 /// Build an Rvalue `Some(val)`.

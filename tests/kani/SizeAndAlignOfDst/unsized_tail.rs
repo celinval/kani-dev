@@ -24,13 +24,14 @@ fn check_adjusted_size_slice() {
 
 #[kani::proof]
 fn check_adjusted_size_dyn() {
+    const EXPECTED_SIZE: usize = size_of::<Pair<u32, [u8; 5]>>();
     let tup: Pair<u32, [u8; 5]> = kani::any();
     let size = std::mem::size_of_val(&tup);
+    assert_eq!(size, EXPECTED_SIZE);
 
     let unsized_tup: *const Pair<u32, dyn Debug> = &tup as *const _ as *const _;
     let adjusted_size = std::mem::size_of_val(unsafe { &*unsized_tup });
-
-    assert_eq!(size, adjusted_size);
+    assert_eq!(adjusted_size, EXPECTED_SIZE);
 }
 
 #[kani::proof]

@@ -155,6 +155,7 @@ macro_rules! kani_mem {
         /// Compute the size of the val pointed to if safe.
         ///
         /// Return `None` if an overflow would occur, or if alignment is not power of two.
+        /// TODO: Optimize this if T is sized.
         pub fn checked_size_of_raw<T: ?Sized>(ptr: *const T) -> Option<usize> {
             #[cfg(not(feature = "concrete_playback"))]
             {
