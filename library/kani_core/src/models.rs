@@ -61,7 +61,10 @@ macro_rules! generate_models {
                     // when the offset is higher than the object bits since it will wrap around.
                     // TODO: Use `wrapping_byte_offset` once we fix:
                     //       https://github.com/model-checking/kani/issues/1150
-                    let new_ptr = orig_ptr.addr().wrapping_add_signed(byte_offset) as *const T;
+                    assert!(offset == 1 && byte_offset == 4 || offset == 2 && byte_offset == 8);
+                    let new_ptr2 = orig_ptr.wrapping_byte_offset(byte_offset);
+                    let new_ptr = (orig_ptr as usize + byte_offset as usize) as *const T;
+                    kani::assert(new_ptr == new_ptr2, "Same PTR");
                     kani::safety_check(
                         kani::mem::same_allocation_internal(orig_ptr, new_ptr),
                         "Offset result and original pointer must point to the same allocation",
